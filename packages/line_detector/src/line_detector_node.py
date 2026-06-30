@@ -4,12 +4,14 @@ from typing import List, Dict
 import numpy as np
 import cv2
 import rospy
+import os
 from cv_bridge import CvBridge
 from sensor_msgs.msg import CompressedImage, Image
 from duckietown_msgs.msg import Segment as SegmentMsg, SegmentList, AntiInstagramThresholds
 from dt_computer_vision.line_detection import LineDetector, ColorRange, Detections
 from dt_computer_vision.line_detection.rendering import draw_segments, draw_maps
 from dt_computer_vision.anti_instagram import AntiInstagram
+from std_srvs.srv import Empty
 
 from duckietown.dtros import DTROS, NodeType, TopicType, DTParam
 
@@ -79,6 +81,9 @@ class LineDetectorNode(DTROS):
         self.on_colors_range_change()
         self._colors.register_update_callback(self.on_colors_range_change)
 
+        self.srv = rospy.Service('save_image', Empty, self.save_image_cb)
+        self.img_n = 0
+
         # Publishers
         self.pub_lines = rospy.Publisher(
             "~segment_list", SegmentList, queue_size=1, dt_topic_type=TopicType.PERCEPTION
@@ -111,6 +116,39 @@ class LineDetectorNode(DTROS):
         else:
             self.loginfo("Using the CPU for line detection.")
             self.cuda_enabled = False
+
+    def save_image_cb(self, req):
+
+        # 1. Define your output folder and filename
+        output_folder = "/data/intersection_images" # <-- Change this to your desired directory
+        filename = f"processed_image_{self.img_n}.png"       # <-- You can add a timestamp here if needed
+        self.img_n += 1
+        
+        # 2. Ensure the folder exists
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+            
+        full_path = os.path.join(output_folder, filename)
+
+        # 3. Handle CUDA vs CPU memory before saving
+        if self.cuda_enabled and isinstance(gpu_image, cv2.cuda_GpuMat):
+            # Download the image from GPU VRAM back to CPU RAM (numpy array)
+            image_to_save = self.gpu_image.download()
+        else:
+            image_to_save = self.gpu_image
+
+        # 4. Write the image to disk
+        # Note: If it's mirrored using np.fliplr, ensure it handles contiguous layout
+        if isinstance(image_to_save, np.ndarray):
+            image_to_save = np.ascontiguousarray(image_to_save)
+            
+        success = cv2.imwrite(full_path, image_to_save)
+        
+        if success:
+            self.loginfo(f"Successfully saved image to {full_path}")
+        else:
+            self.logerr(f"Failed to save image to {full_path}")
+
 
     def on_colors_range_change(self):
         self.color_ranges = {
@@ -184,6 +222,9 @@ class LineDetectorNode(DTROS):
         # Extract the line segments for every color
         color_detections: List[Detections] = (
             self.detector.detect(gpu_image, colors_to_detect))
+        
+        self.gpu_image = gpu_image
+
 
         dets: Dict[str, dict] ={}
         for i, detections in enumerate(color_detections):

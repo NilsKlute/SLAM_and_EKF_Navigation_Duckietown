@@ -98,6 +98,7 @@ class UnicornIntersectionNode(DTROS):
             rospy.loginfo("[unicorn_intersection_node] We have what we need, calculating reference trajectory")
             self.reference_trajectory = self.calculate_goal_trajectory()
             rospy.loginfo(f"[unicorn_intersection_node] Reference trajectory calculated: {self.reference_trajectory}")
+            self.reset_odometry()
             self.internal_state = "EXECUTING"
         else:
             rospy.loginfo(f"[unicorn_intersection_node] We don't have what we need yet: "
@@ -136,8 +137,7 @@ class UnicornIntersectionNode(DTROS):
         directions = []
         for alpha in alphas:
             rel = g.SE2.group_from_algebra(vel * alpha)
-            inter_pose = g.SE2.multiply(g_stop_pose, rel)
-            position, direction = g.translation_angle_from_SE2(inter_pose)
+            position, direction = g.translation_angle_from_SE2(rel)
             print(f"Adding waypoint:  position {position}, angle {direction}")
             waypoints.append(position)
             directions.append(direction)
@@ -342,24 +342,23 @@ class UnicornIntersectionNode(DTROS):
         return omega
 
     def check_point(self, current_point, target_point):
-        threshold = 0.1
-        threshold_x = 0.08
-        dist_x = np.zeros((1,2))
-        dist_x[0, 0] = (current_point[0] - self.alpha) - target_point[0]
-        dist_x[0, 1] = (current_point[1]) - target_point[1]
+        """
+        Checks if the robot has arrived at the target waypoint using 
+        Euclidean distance thresholds.
+        """
+        # 1. Calculate the true straight-line distance to the target waypoint
+        dist = np.sqrt((current_point[0] - target_point[0])**2 + (current_point[1] - target_point[1])**2)
+        
+        # 2. Set distinct, logical arrival thresholds (in meters)
+        intermediate_threshold = 0.15  # 15 cm radius to allow smooth sequencing through intermediate points
+        final_threshold = 0.08         # 8 cm tighter radius to guarantee accuracy at the destination lane
+        
         if self.iter_ == (self.num_waypoints - 1):
-            if abs(dist_x[0, 1]) < threshold_x:
-                return True
-
-            return False
-
+            # Final waypoint check: Must be close to the goal lane to stop executing
+            return dist < final_threshold
         else:
-            dist = np.sqrt(((current_point[0]-self.alpha) - target_point[0])**2 + ((current_point[1]-self.alpha) - target_point[1])**2 )
-
-            if (abs(dist_x[0,0])) > threshold_x or (dist) < threshold:
-                return True
-
-            return False
+            # Intermediate waypoint check: Move to next point once inside the radius
+            return dist < intermediate_threshold
 
 if __name__ == "__main__":
     unicorn_intersection_node = UnicornIntersectionNode(node_name="unicorn_intersection_node")

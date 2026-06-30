@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import math
-
+import time
 import numpy
 
 import rospy
@@ -30,6 +30,7 @@ class RandomAprilTagTurnsNode(DTROS):
 
         # Setup subscribers
         self.sub_topic_tag = rospy.Subscriber("~tag", AprilTagsWithInfos, self.cbTag, queue_size=1)
+        
 
         rospy.loginfo(f"[{self.node_name}] Initialzed.")
 
@@ -37,6 +38,7 @@ class RandomAprilTagTurnsNode(DTROS):
     def cbTag(self, tag_msgs):
             # loop through list of april tags to
             # find the nearest apriltag
+            time.sleep(1)
             dis_min = 999
             idx_min = -1
             for idx, taginfo in enumerate(tag_msgs.infos):
@@ -58,6 +60,18 @@ class RandomAprilTagTurnsNode(DTROS):
                             idx_min = idx
 
             if idx_min == -1:
+                self.turn_type = 0
+                self.pub_turn_type.publish(self.turn_type)
+
+                id_and_type_msg = TurnIDandType()
+                id_and_type_msg.tag_id = 73 # ??
+                id_and_type_msg.turn_type = self.turn_type
+                self.pub_id_and_type.publish(id_and_type_msg)
+
+                intersection_go_msg = BoolStamped()
+                intersection_go_msg.header = tag_msgs.header
+                intersection_go_msg.data = True
+                self.pub_intersection_go.publish(intersection_go_msg)
                 rospy.logwarn("[RANDOM_APRIL_TAG_TURNS_NODE]: Unable to determine available turns at intersection"
                               "no appropriate signs detected")
             else:

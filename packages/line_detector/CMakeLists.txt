@@ -6,6 +6,8 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   duckietown_msgs # Every duckietown packages should use this.
   cv_bridge
+  rospy
+  std_srvs
   # XXX add anti_instagram?
 )
 
