@@ -6,6 +6,7 @@ from duckietown.dtros import DTParam, DTROS, NodeType, ParamType
 from duckietown_msgs.msg import BoolStamped, FSMState, LanePose, SegmentList, StopLineReading
 from geometry_msgs.msg import Pose2D
 from std_msgs.msg import String, Float64MultiArray, Int64
+from duckietown_msgs.srv import SetFSMState, SetFSMStateResponse, ChangePattern
 
 class TargetSelectionNode(DTROS):
     """
@@ -28,7 +29,7 @@ class TargetSelectionNode(DTROS):
             node_type=NodeType.PERCEPTION,
             fsm_controlled=True)
 
-        self.srv_target_selection = rospy.Service("~set_state", String, self.cb_target_selection)
+        self.srv_target_selection = rospy.Service("~select_target", SetFSMState, self.cb_target_selection)
         
         self.pub_target_specified = rospy.Publisher("~target_specified", BoolStamped, queue_size=1, latch=True)
         self.pub_target_location = rospy.Publisher("~target_location", String, queue_size=1, latch=True)
