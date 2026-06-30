@@ -7,7 +7,7 @@ import numpy
 
 import rospy
 from duckietown_msgs.msg import AprilTagsWithInfos, FSMState, TurnIDandType, BoolStamped
-from std_msgs.msg import Int16  # Imports msg
+from std_msgs.msg import Int16, Int64MultiArray  # Imports msg
 from duckietown.dtros import DTROS, NodeType, TopicType, DTParam, ParamType
 
 
@@ -29,13 +29,13 @@ class RandomAprilTagTurnsNode(DTROS):
         self.pub_intersection_go = rospy.Publisher("~intersection_go", BoolStamped, queue_size=1)
 
         # Setup subscribers
-        self.sub_topic_tag = rospy.Subscriber("~tag", AprilTagsWithInfos, self.cbTag, queue_size=1)
+        self.sub_topic_tag = rospy.Subscriber("~available_turns", Int64MultiArray, self.decide_cb, queue_size=1)
         
 
         rospy.loginfo(f"[{self.node_name}] Initialzed.")
 
 
-    def cbTag(self, tag_msgs):
+    def decide_cb(self, avail_turns_msg):
             # loop through list of april tags to
             # find the nearest apriltag
             time.sleep(1)

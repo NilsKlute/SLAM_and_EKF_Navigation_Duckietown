@@ -11,7 +11,7 @@ from duckietown_msgs.msg import Segment as SegmentMsg, SegmentList, AntiInstagra
 from dt_computer_vision.line_detection import LineDetector, ColorRange, Detections
 from dt_computer_vision.line_detection.rendering import draw_segments, draw_maps
 from dt_computer_vision.anti_instagram import AntiInstagram
-from std_srvs.srv import Empty
+from std_srvs.srv import Empty, EmptyResponse
 
 from duckietown.dtros import DTROS, NodeType, TopicType, DTParam
 
@@ -148,6 +148,8 @@ class LineDetectorNode(DTROS):
             self.loginfo(f"Successfully saved image to {full_path}")
         else:
             self.logerr(f"Failed to save image to {full_path}")
+
+        return EmptyResponse()
 
 
     def on_colors_range_change(self):

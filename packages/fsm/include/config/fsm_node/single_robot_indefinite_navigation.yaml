@@ -11,12 +11,12 @@ events: # Maps from subscribing topic to signal ids
     topic: "joy_mapper_node/joystick_override"
     msg_type: "BoolStamped"
     trigger: False
-  target_specified:
-    topic: "target_selection_node/target_specified"
-    msg_type: "BoolStamped"
-    trigger: True
   at_stop_line:
     topic: "stop_line_filter_node/at_stop_line"
+    msg_type: "BoolStamped"
+    trigger: True
+  traffic_light_detected:
+    topic: "intersection_type_detector_node/traffic_light_intersection_detected"
     msg_type: "BoolStamped"
     trigger: True
   stop_sign_intersection_go:
@@ -31,11 +31,6 @@ events: # Maps from subscribing topic to signal ids
     topic: "intersection_navigation_node/intersection_done"
     msg_type: "BoolStamped"
     trigger: True
-  target_reached:
-    topic: "graph_planner_node/arrived_at_target"
-    msg_type: "BoolStamped"
-    trigger: True
-
 
 # Define nodes
 nodes:
@@ -54,8 +49,6 @@ nodes:
   intersection_type_detector_node: "intersection_type_detector_node/switch"
   decoder_node: "decoder_node/switch"
   rectifier_node: "rectifier_node/switch"
-  graph_planner_node: "graph_planner_node/switch"
-  target_selection_node: "target_selection_node/switch"
 
 
 # Define state transitions
@@ -66,27 +59,20 @@ global_transitions:
 states:
   NORMAL_JOYSTICK_CONTROL:
     transitions:
-      joystick_override_off: "IDLE"
+      joystick_override_off: "LANE_FOLLOWING"
     active_nodes:
       - lane_filter_node
       - line_detector_node
       - stop_line_filter_node
       - ground_projection_node
       - anti_instagram
+#      - apriltag_detector_node
+#      - apriltag_postprocessing_node
     lights: "GREEN"
-
-  IDLE:
-    transitions:
-      target_specified: "LANE_FOLLOWING"
-    active_nodes:
-      - target_selection_node
-    lights: "WHITE"
-
 
   LANE_FOLLOWING:
     transitions:
       at_stop_line: "STOP_SIGN_INTERSECTION"
-      target_reached: "IDLE"
     active_nodes:
       - anti_instagram
       - line_detector_node
@@ -95,7 +81,6 @@ states:
       - lane_controller_node
       - stop_line_filter_node
       - unicorn_intersection_node
-      - graph_planner_node
     lights: "RED"
 
   STOP_SIGN_INTERSECTION:
@@ -106,7 +91,6 @@ states:
       - intersection_type_detector_node
       - random_april_tag_turns_node
       - unicorn_intersection_node
-      - graph_planner_node
     lights: "WHITE"
 
   INTERSECTION_CONTROL:
@@ -118,4 +102,3 @@ states:
       - lane_controller_node
       - unicorn_intersection_node
       - random_april_tag_turns_node
-      - graph_planner_node

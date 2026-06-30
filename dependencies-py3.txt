@@ -12,7 +12,8 @@ compmake-z6==6.1.5
 filterpy==1.4.5
 simple-pid<=2.0.1
 numpy-quaternion==2023.0.4
-
+scikit-learn
+scipy
 # -- Duckietown --
 
 # ATags3 Python bindings

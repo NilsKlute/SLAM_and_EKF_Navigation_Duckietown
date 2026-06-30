@@ -39,7 +39,11 @@
 		<arg name="intersection_type_detector" value="true"/>
 		<arg name="intersectionType" value="trafficLight"/>
 
-		<!-- TODO traffic lights -->
+		<!-- Graph Planner -->
+		<arg name="graph_planner" default="true"/>
+
+		<!-- Target Selection -->
+		<arg name="target_selection" default="true"/>
 
 	</include>
 </launch>
