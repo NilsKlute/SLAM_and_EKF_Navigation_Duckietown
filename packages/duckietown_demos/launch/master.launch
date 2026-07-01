@@ -416,7 +416,7 @@
         <remap from="unicorn_intersection_node/fsm_state" to="fsm_node/mode"/>
         <remap from="unicorn_intersection_node/intersection_go" to="coordinator_node/intersection_go"/>
         <remap from="unicorn_intersection_node/intersection_done" to="intersection_navigation_node/intersection_done"/>
-        <remap from="unicorn_intersection_node/turn_id_and_type" to="random_april_tag_turns_node/turn_id_and_type"/>
+        <remap from="unicorn_intersection_node/turn_type" to="random_april_tag_turns_node/turn_type"/>
         <remap from="unicorn_intersection_node/stop_line_reading" to="stop_line_filter_node/stop_line_reading"/>
         <remap from="unicorn_intersection_node/left_wheel_encoder_driver_node/tick" to="left_wheel_encoder_driver_node/tick"/>
         <remap from="unicorn_intersection_node/right_wheel_encoder_driver_node/tick" to="right_wheel_encoder_driver_node/tick"/>
@@ -466,7 +466,7 @@
         <!-- random april tags -->
         <remap from="random_april_tag_turns_node/mode" to="fsm_node/mode"/>
         <remap from="random_april_tag_turns_node/available_turns" to="intersection_type_detector_node/available_turns"/>
-
+        <remap from="random_april_tag_turns_node/directional_cmd" to="graph_planner_node/directional_cmd"/>
         <remap from="random_april_tag_turns_node/turn_type" to="intersection_navigation_node/turn_type"/>
 
         <include file="$(find navigation)/launch/random_april_tag_turns_node.launch">

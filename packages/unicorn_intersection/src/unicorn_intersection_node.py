@@ -7,7 +7,7 @@ from duckietown_msgs.msg import BoolStamped, \
     WheelEncoderStamped, \
     Twist2DStamped, \
     StopLineReading
-
+from std_msgs.msg import Int16
 
 from duckietown.dtros import DTROS, NodeType, TopicType, DTParam, ParamType
 import math 
@@ -51,7 +51,7 @@ class UnicornIntersectionNode(DTROS):
 
 
         ## Subscribers
-        self.sub_turn_type = rospy.Subscriber("~turn_id_and_type", TurnIDandType, self.cbTurnType)
+        self.sub_turn_type = rospy.Subscriber("~turn_type", Int16, self.cbTurnType)
         self.sub_encoder_left = message_filters.Subscriber("~left_wheel_encoder_driver_node/tick", WheelEncoderStamped)
         self.sub_encoder_right = message_filters.Subscriber("~right_wheel_encoder_driver_node/tick", WheelEncoderStamped)
         self.sub_encoder_right = message_filters.Subscriber("~right_wheel_encoder_driver_node/tick", WheelEncoderStamped)
@@ -295,7 +295,7 @@ class UnicornIntersectionNode(DTROS):
         if self.turn_type_received:
             return
 
-        self.turn_type = msg.turn_type
+        self.turn_type = msg.data
         self.turn_type_received = True
         rospy.loginfo(f"[unicorn_intersection_node] Received turn type: {self.turn_type} ")
         self.check_if_go()

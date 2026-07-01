@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import math
+import time
 from cv_bridge import CvBridge
 import numpy as np
 import cv2
@@ -45,6 +46,8 @@ class IntersectionTypeDetectorNode(DTROS):
         self.anti_instagram_thresholds = dict()
         self.ai = AntiInstagram()
 
+        self.last_call = time.time()
+
         # Setup publishers
         self.pub_stop_sign = rospy.Publisher(
             "~stop_sign_intersection_detected",
@@ -82,6 +85,12 @@ class IntersectionTypeDetectorNode(DTROS):
 
 
     def image_cb(self, image_msg):
+            
+            if (time.time() - self.last_call) < 1:
+                return
+            
+            self.last_call = time.time()
+            
             try:
                 obtained_image = self.bridge.compressed_imgmsg_to_cv2(image_msg)
             except ValueError as e:

@@ -43,8 +43,11 @@ class TargetSelectionNode(DTROS):
         # Report Target Specification to FSM
         self.pub_target_specified.publish(specified_msg)
 
+        send_target_msg = String()
+        send_target_msg.data = target_msg.state
+
         # Transfer Target Label to Planner
-        self.pub_target_location.publish(target_msg)
+        self.pub_target_location.publish(send_target_msg)
 
 
         
