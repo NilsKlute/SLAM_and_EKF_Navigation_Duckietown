@@ -86,8 +86,16 @@
     <arg name="statistics" default="false"/>
     <arg name="enable_statistics" default="$(arg statistics)"/>
     <arg name="maintenance_control" default="false"/>
+    <arg name="ekf_localization_node" default="true"/>
     <!-- end switch args -->
 
+    <!-- ekf localization node-->
+    <group if="$(arg ekf_localization_node)">
+        <include file="$(find navigation)/launch/ekf_localization_node.launch">
+            <arg name="veh" value="$(arg veh)"/>
+            <arg name="param_file_name" value="$(arg param_file_name)"/>
+        </include>
+    </group>
 
     <!-- Image Decoding -->
     <group if="$(arg /camera/raw)">
