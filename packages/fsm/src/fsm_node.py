@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import copy
+import threading
 
 import rospy
 from duckietown_msgs.msg import BoolStamped, FSMState
@@ -38,22 +39,31 @@ class FSMNode:
         # Construct service calls
         self.srv_dict = dict()
         nodes = rospy.get_param("~nodes")
-        # rospy.loginfo(nodes)
         self.active_nodes = None
 
-        # for node_name, topic_name in list(nodes.items()):
-        #     self.pub_dict[node_name] = rospy.Publisher(topic_name, BoolStamped, queue_size=1, latch=True)
+        # drop any node not referenced in at least one state's active_nodes
+        reachable = set()
+        for state_dict in self.states_dict.values():
+            reachable.update(state_dict.get("active_nodes", []))
+        nodes = {k: v for k, v in nodes.items() if k in reachable}
 
-        for node_name, service_name in list(nodes.items()):
+        def _connect(node_name, service_name):
             rospy.loginfo(f"FSM waiting for service {service_name}")
             try:
-                rospy.wait_for_service(
-                    service_name, timeout=30.0
-                )  #  Increased timeout to handle slower node initialization
+                rospy.wait_for_service(service_name, timeout=30.0)
                 self.srv_dict[node_name] = rospy.ServiceProxy(service_name, SetBool)
                 rospy.loginfo(f"FSM found service {service_name}")
             except rospy.ROSException as e:
                 rospy.logwarn(f"{e}")
+
+        threads = [
+            threading.Thread(target=_connect, args=(name, svc), daemon=True)
+            for name, svc in nodes.items()
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
         # to change the LEDs
         self.changePattern = rospy.ServiceProxy("~set_pattern", ChangePattern)

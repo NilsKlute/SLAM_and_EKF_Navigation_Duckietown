@@ -388,7 +388,7 @@ class Bev_slam:
         return self.get_map()
 
     def publish_map(self):
-        print("publish_map")
+        #print("publish_map")
         if self.global_map is None:
             return
 

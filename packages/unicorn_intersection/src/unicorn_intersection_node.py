@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
-import json
+import math
 import numpy as np
 import rospy
 from duckietown_msgs.msg import BoolStamped, \
-    TurnIDandType, \
     WheelEncoderStamped, \
     Twist2DStamped, \
-    StopLineReading
+    StopLineReading, \
+    FSMState
 from std_msgs.msg import Int16
-
-from duckietown.dtros import DTROS, NodeType, TopicType, DTParam, ParamType
-import math 
-from geometry_msgs.msg import Quaternion, Twist, Pose2D, Point, Vector3, TransformStamped, Transform
-
+from geometry_msgs.msg import Pose2D
 from nav_msgs.msg import Odometry
-
 import message_filters
 from tf import transformations as tr
-
+from duckietown.dtros import DTROS, NodeType, TopicType
 import geometry as g
+import time
 
 class UnicornIntersectionNode(DTROS):
     def __init__(self, node_name):
@@ -32,7 +28,6 @@ class UnicornIntersectionNode(DTROS):
         self.turn_type_received = False
         self.stop_line_pose_received = False
 
-        ## setup Parameters
         self.setupParams()
 
         self.goal_poses = {
@@ -42,46 +37,34 @@ class UnicornIntersectionNode(DTROS):
         }
 
         self.reference_trajectory = []
-
-        ## Internal variables
         self.turn_type = -1
         self.stop_line_pose = Pose2D()
+        self.fsm_state = None
 
-        self.debug = False
-
-
-        ## Subscribers
         self.sub_turn_type = rospy.Subscriber("~turn_type", Int16, self.cbTurnType)
         self.sub_encoder_left = message_filters.Subscriber("~left_wheel_encoder_driver_node/tick", WheelEncoderStamped)
         self.sub_encoder_right = message_filters.Subscriber("~right_wheel_encoder_driver_node/tick", WheelEncoderStamped)
-        self.sub_encoder_right = message_filters.Subscriber("~right_wheel_encoder_driver_node/tick", WheelEncoderStamped)
         self.sub_stop_line_reading = rospy.Subscriber("~stop_line_reading", StopLineReading, self.cbStopLineReading)
+        self.sub_fsm_mode = rospy.Subscriber("~mode", FSMState, self.cbsetFSM)
 
-        ## Publisher
         self.pub_int_done = rospy.Publisher("~intersection_done", BoolStamped, queue_size=1)
+        self.pub_trans_done = rospy.Publisher("~transition_done", BoolStamped, queue_size=1)
         self.car_cmd = rospy.Publisher("~car_cmd", Twist2DStamped, queue_size=1, dt_topic_type=TopicType.CONTROL)
         self.reference_trajectory_pub = rospy.Publisher(
             "~reference_trajectory",
             Odometry,
             queue_size=self.num_waypoints,
         )
+        self.pub_intersection_go = rospy.Publisher("~intersection_go", BoolStamped, queue_size=1)
 
         self.ts_encoders = message_filters.ApproximateTimeSynchronizer(
             [self.sub_encoder_left, self.sub_encoder_right], 1, 1
         )
         self.ts_encoders.registerCallback(self.cb_ts_encoders)
 
-        ## update Parameters timer
         self.params_update = rospy.Timer(rospy.Duration.from_sec(1.0), self.updateParams)
-
-        ## Deadreckoning 
-
-        # introducing deadreckoning
         self.reset_odometry()
-
-        self.alpha = 0.0
-
-        self.log("Initialialized unicorn intersection node")
+        self.log("Initialized unicorn intersection node")
 
     def cbStopLineReading(self, msg):
         if self.stop_line_pose_received:
@@ -100,22 +83,21 @@ class UnicornIntersectionNode(DTROS):
             rospy.loginfo(f"[unicorn_intersection_node] Reference trajectory calculated: {self.reference_trajectory}")
             self.reset_odometry()
             self.internal_state = "EXECUTING"
+
+            go_msg = BoolStamped()
+            go_msg.header.stamp = rospy.Time.now()
+            go_msg.data = True
+            self.pub_intersection_go.publish(go_msg)
+
         else:
             rospy.loginfo(f"[unicorn_intersection_node] We don't have what we need yet: "
                       f"stop_line received: {self.stop_line_pose_received} " 
                       f"turn_type_received: {self.turn_type_received} "
                       f"internal_state:{self.internal_state} ")
 
-    # Calculate the pose that we want to navigate to relative to where we are. If we are using
-    # the stop line pose then we need to calculate the stop line relative to the robot, and then the
-    # goal pose relative to the stop line. If not using the stop line then we can use some fixed offset based on the
-    # stop line distance? TODO
     def calculate_goal_trajectory(self):
         g_stop_pose = self.ros_pose_to_geometry(self.stop_line_pose)
-        # TODO what if we don't want to use the stop_pose?
 
-        # TODO this should really be turned into an enum
-        # Step 1 - calculate the goal pose in the robot frame
         if self.turn_type == 0:
             canonical_goal_pose = self.goal_poses['left']
         elif self.turn_type == 1:
@@ -123,26 +105,23 @@ class UnicornIntersectionNode(DTROS):
         elif self.turn_type == 2:
             canonical_goal_pose = self.goal_poses['right']
         else:
-            rospy.logerr("[unicorn_intersection_node] Something went wrong, invalid turn type")
+            rospy.logerr("[unicorn_intersection_node] invalid turn type")
 
-        robot_frame_goal_pose = g.SE2.multiply( g.SE2.inverse(g_stop_pose), canonical_goal_pose)
+        robot_frame_goal_pose = g.SE2.multiply(g.SE2.inverse(g_stop_pose), canonical_goal_pose)
 
         p, d = g.translation_angle_from_SE2(robot_frame_goal_pose)
-        print(f"goal_pose in robot frame: position {p}, angle  {d}")
+        rospy.loginfo(f"goal_pose in robot frame: position {p}, angle {d}")
 
-        # Step 2: Interpolate along the trajectory to generate waypoints
         vel = g.SE2.algebra_from_group(robot_frame_goal_pose)
-        alphas = [x/self.num_waypoints for x in range(1, self.num_waypoints+1)]
+        alphas = [x / self.num_waypoints for x in range(1, self.num_waypoints + 1)]
         waypoints = []
         directions = []
         for alpha in alphas:
             rel = g.SE2.group_from_algebra(vel * alpha)
             position, direction = g.translation_angle_from_SE2(rel)
-            print(f"Adding waypoint:  position {position}, angle {direction}")
             waypoints.append(position)
             directions.append(direction)
 
-        # Step 3 (optional): Publish the trajectory for visualization in RVIZ
         if self.visualization:
             self.visualize_trajectory(waypoints, directions)
         return waypoints
@@ -172,27 +151,21 @@ class UnicornIntersectionNode(DTROS):
         self.timestamp = None
         self.x = 0.0
         self.y = 0.0
-        self.z = 0.0
         self.yaw = 0.0
         self.q = [0.0, 0.0, 0.0, 1.0]
         self.tv = 0.0
         self.rv = 0.0
-
         self.ticks_per_meter = 656.0
         self.wheelbase = 0.108
         self.iter_ = 0
-        self.final_state = 0
 
     def cb_ts_encoders(self, left_encoder, right_encoder):
-        if self.internal_state != "EXECUTING":
+        if self.internal_state != "EXECUTING": 
             return
 
         timestamp_now = rospy.get_time()
 
-        # Use the average of the two encoder times as the timestamp
-        left_encoder_timestamp = left_encoder.header.stamp.to_sec()
-        right_encoder_timestamp = right_encoder.header.stamp.to_sec()
-        timestamp = (left_encoder_timestamp + right_encoder_timestamp) / 2
+        timestamp = (left_encoder.header.stamp.to_sec() + right_encoder.header.stamp.to_sec()) / 2
 
         if not self.left_encoder_last:
             self.left_encoder_last = left_encoder
@@ -201,47 +174,22 @@ class UnicornIntersectionNode(DTROS):
             self.encoders_timestamp_last_local = timestamp_now
             return
 
-        # Skip this message if the time synchronizer gave us an older message
         dtl = left_encoder.header.stamp - self.left_encoder_last.header.stamp
         dtr = right_encoder.header.stamp - self.right_encoder_last.header.stamp
         if dtl.to_sec() < 0 or dtr.to_sec() < 0:
             self.loginfo("Ignoring stale encoder message")
             return
 
-        left_dticks = left_encoder.data - self.left_encoder_last.data
-        right_dticks = right_encoder.data - self.right_encoder_last.data
+        left_distance = (left_encoder.data - self.left_encoder_last.data) / self.ticks_per_meter
+        right_distance = (right_encoder.data - self.right_encoder_last.data) / self.ticks_per_meter
 
-        left_distance = left_dticks * 1.0 / self.ticks_per_meter
-        right_distance = right_dticks * 1.0 / self.ticks_per_meter
-
-        # Displacement in body-relative x-direction
         distance = (left_distance + right_distance) / 2
-
-        # Change in heading
         dyaw = (right_distance - left_distance) / self.wheelbase
 
-        dt = timestamp - self.encoders_timestamp_last
-
-        if dt < 1e-6:
-            dt = 1e-6
+        dt = max(timestamp - self.encoders_timestamp_last, 1e-6)
 
         self.tv = distance / dt
         self.rv = dyaw / dt
-
-        if self.debug:
-            self.loginfo(
-                "Left wheel:\t Time = %.4f\t Ticks = %d\t Distance = %.4f m"
-                % (left_encoder.header.stamp.to_sec(), left_encoder.data, left_distance)
-            )
-
-            self.loginfo(
-                "Right wheel:\t Time = %.4f\t Ticks = %d\t Distance = %.4f m"
-                % (right_encoder.header.stamp.to_sec(), right_encoder.data, right_distance)
-            )
-
-            self.loginfo(
-                "TV = %.2f m/s\t RV = %.2f deg/s\t DT = %.4f" % (self.tv, self.rv * 180 / math.pi, dt)
-            )
 
         dist = self.tv * dt
         dyaw = self.rv * dt
@@ -258,27 +206,26 @@ class UnicornIntersectionNode(DTROS):
         self.encoders_timestamp_last_local = timestamp_now
 
         car_control_msg = Twist2DStamped()
-        #TODO
         car_control_msg.header.stamp = rospy.Time.now()
-        car_control_msg.header.seq = 0
-
-        # Add commands to car message
         car_control_msg.v = self.speed
-        car_control_msg.omega = self.compute_omega(self.reference_trajectory[self.iter_],self.x,self.y,self.yaw,dt)
+        car_control_msg.omega = self.compute_omega(self.reference_trajectory[self.iter_], self.x, self.y, self.yaw, dt)
         self.car_cmd.publish(car_control_msg)
 
-        if self.check_point( np.array([self.x,self.y]),self.reference_trajectory[self.iter_] ):
+        if self.check_point(np.array([self.x, self.y]), self.reference_trajectory[self.iter_]):
             self.iter_ += 1
             if self.iter_ == self.num_waypoints:
                 self.internal_state = "READY"
                 self.stop_line_pose_received = False
                 self.turn_type_received = False
-                # Publish intersection done
                 msg_done = BoolStamped()
                 msg_done.data = True
                 self.pub_int_done.publish(msg_done)
                 self.reset_odometry()
-                rospy.loginfo("[unicorn intersection node] intersection navigation complete")
+                rospy.loginfo("[unicorn_intersection_node] intersection navigation complete")
+                time.sleep(1.5)
+                self.pub_trans_done.publish(msg_done)
+                rospy.loginfo("[unicorn_intersection_node] transition to lane following complete")
+
 
 
 
@@ -331,9 +278,6 @@ class UnicornIntersectionNode(DTROS):
         else:
             return theta      
 
-    def path_plan(self,obstacle,lane):
-            return 0
-
     def compute_omega(self,targetxy,x,y,current,dt):
         factor = 1 # PARAM 
         target_yaw = np.arctan2( (targetxy[1] - y),(targetxy[0]- x) )
@@ -342,23 +286,14 @@ class UnicornIntersectionNode(DTROS):
         return omega
 
     def check_point(self, current_point, target_point):
-        """
-        Checks if the robot has arrived at the target waypoint using 
-        Euclidean distance thresholds.
-        """
-        # 1. Calculate the true straight-line distance to the target waypoint
         dist = np.sqrt((current_point[0] - target_point[0])**2 + (current_point[1] - target_point[1])**2)
-        
-        # 2. Set distinct, logical arrival thresholds (in meters)
-        intermediate_threshold = 0.15  # 15 cm radius to allow smooth sequencing through intermediate points
-        final_threshold = 0.08         # 8 cm tighter radius to guarantee accuracy at the destination lane
-        
+        # tighter threshold at the final waypoint to land accurately in the exit lane
         if self.iter_ == (self.num_waypoints - 1):
-            # Final waypoint check: Must be close to the goal lane to stop executing
-            return dist < final_threshold
-        else:
-            # Intermediate waypoint check: Move to next point once inside the radius
-            return dist < intermediate_threshold
+            return dist < 0.08
+        return dist < 0.15
+        
+    def cbsetFSM(self, fsm_msg):
+        self.fsm_state = fsm_msg.state
 
 if __name__ == "__main__":
     unicorn_intersection_node = UnicornIntersectionNode(node_name="unicorn_intersection_node")

@@ -1,3 +1,0 @@
-# offset from the ground, in meters, of the time-of-flight sensor
-# TODO: this should be defined in the URDF instead
-h_offset: 0.02

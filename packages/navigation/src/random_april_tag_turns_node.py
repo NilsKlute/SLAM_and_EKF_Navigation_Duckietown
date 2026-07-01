@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import math
 import time
-import numpy
-
 import rospy
-from duckietown_msgs.msg import AprilTagsWithInfos, FSMState, TurnIDandType, BoolStamped
-from std_msgs.msg import Int16, Int64MultiArray, Int64  # Imports msg
-from duckietown.dtros import DTROS, NodeType, TopicType, DTParam, ParamType
+from std_msgs.msg import Int16, Int64MultiArray, Int64
+from duckietown.dtros import DTROS, NodeType
 
 
 class RandomAprilTagTurnsNode(DTROS):
@@ -25,8 +19,6 @@ class RandomAprilTagTurnsNode(DTROS):
 
         # Setup publishers
         self.pub_turn_type = rospy.Publisher("~turn_type", Int16, queue_size=1, latch=True)
-        #self.pub_id_and_type = rospy.Publisher("~turn_id_and_type", TurnIDandType, queue_size=1, latch=True)
-        self.pub_intersection_go = rospy.Publisher("~intersection_go", BoolStamped, queue_size=1)
 
         # Setup subscribers
         self.sub_topic_tag = rospy.Subscriber("~available_turns", Int64MultiArray, self.decide_cb, queue_size=1)
@@ -64,16 +56,10 @@ class RandomAprilTagTurnsNode(DTROS):
         self.pub_turn_type.publish(turn_decision_msg)
         rospy.loginfo(f"[{self.node_name}] We decided on turn ID {turn_decision_msg.data}")
 
-        go_msg = BoolStamped()
-        go_msg.header.stamp = rospy.Time.now()
-        go_msg.data = True
-        self.pub_intersection_go.publish(go_msg)
-
 
     def setupParameter(self, param_name, default_value):
         value = rospy.get_param(param_name, default_value)
-        rospy.set_param(param_name, value)  # Write to parameter server for transparancy
-        # rospy.loginfo("[%s] %s = %s " %(self.node_name,param_name,value))
+        rospy.set_param(param_name, value)
         return value
 
     def on_shutdown(self):
@@ -81,13 +67,6 @@ class RandomAprilTagTurnsNode(DTROS):
 
 
 if __name__ == "__main__":
-    # Initialize the node with rospy
-    # rospy.init_node("random_april_tag_turns_node", anonymous=False)
-
-    # Create the NodeName object
     node = RandomAprilTagTurnsNode(node_name="random_april_tag_turns_node")
-
-    # Setup proper shutdown behavior
     rospy.on_shutdown(node.on_shutdown)
-    # Keep it spinning to keep the node alive
     rospy.spin()

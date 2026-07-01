@@ -90,7 +90,7 @@ class IntersectionTypeDetectorNode(DTROS):
                 return
             
             self.last_call = time.time()
-            
+
             try:
                 obtained_image = self.bridge.compressed_imgmsg_to_cv2(image_msg)
             except ValueError as e:
@@ -272,21 +272,7 @@ class IntersectionTypeDetectorNode(DTROS):
                 avail_turns_msg.data = available_turns
 
                 self.pub_topic_avail_turns.publish(avail_turns_msg)
-
-                """msg = BoolStamped()
-                msg.header.stamp = image_msg.header.stamp
-                msg.data = True
-                self.pub_stop_sign.publish(msg)"""
-
             
-
-            
-
-    def setupParameter(self, param_name, default_value):
-        value = rospy.get_param(param_name, default_value)
-        rospy.set_param(param_name, value)  # Write to parameter server for transparancy
-        # rospy.loginfo("[%s] %s = %s " %(self.node_name,param_name,value))
-        return value
     
     def thresholds_cb(self, thresh_msg):
         self.anti_instagram_thresholds["lower"] = thresh_msg.low

@@ -20,7 +20,7 @@ events: # Maps from subscribing topic to signal ids
     msg_type: "BoolStamped"
     trigger: True
   stop_sign_intersection_go:
-    topic: "random_april_tag_turns_node/intersection_go"
+    topic: "unicorn_intersection_node/intersection_go"
     msg_type: "BoolStamped"
     trigger: True
   traffic_light_intersection_go:
@@ -35,25 +35,23 @@ events: # Maps from subscribing topic to signal ids
     topic: "graph_planner_node/arrived_at_target"
     msg_type: "BoolStamped"
     trigger: True
+  transition_completed:
+    topic: "unicorn_intersection_node/transition_done"
+    msg_type: "BoolStamped"
+    trigger: True
 
 
 # Define nodes
 nodes:
   anti_instagram: "anti_instagram_node/switch"
-  apriltag_detector_node: "apriltag_detector_node/switch"
-  apriltag_postprocessing_node: "apriltag_postprocessing_node/switch"
   led_emitter_node: "led_emitter_node/switch"
-  led_detector_node: "led_detector_node/switch"
   line_detector_node: "line_detector_node/switch"
   lane_filter_node: "lane_filter_node/switch"
   stop_line_filter_node: "stop_line_filter_node/switch"
-  coordinator_node: "coordinator_node/switch"
-  unicorn_intersection_node: "unicorn_intersection_node/switch" #NOTE a.k.a. semi closed loop intersection navigation
+  unicorn_intersection_node: "unicorn_intersection_node/switch"
   lane_controller_node: "lane_controller_node/switch"
   random_april_tag_turns_node: "random_april_tag_turns_node/switch"
   intersection_type_detector_node: "intersection_type_detector_node/switch"
-  decoder_node: "decoder_node/switch"
-  rectifier_node: "rectifier_node/switch"
   graph_planner_node: "graph_planner_node/switch"
   target_selection_node: "target_selection_node/switch"
   ekf_localization_node: "ekf_localization_node/switch"
@@ -116,7 +114,7 @@ states:
 
   INTERSECTION_CONTROL:
     transitions:
-      intersection_done: "LANE_FOLLOWING"
+      intersection_done: "TRANSITION"
     active_nodes:
       - line_detector_node
       - lane_filter_node
@@ -124,3 +122,18 @@ states:
       - unicorn_intersection_node
       - graph_planner_node
       - ekf_localization_node
+
+  TRANSITION:
+    transitions:
+      transition_completed: "LANE_FOLLOWING"
+      target_reached: "IDLE"
+    active_nodes:
+      - anti_instagram
+      - line_detector_node
+      - ground_projection_node
+      - lane_filter_node
+      - lane_controller_node
+      - unicorn_intersection_node
+      - graph_planner_node
+      - ekf_localization_node
+    lights: "RED"
