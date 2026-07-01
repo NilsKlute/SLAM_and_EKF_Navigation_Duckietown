@@ -56,6 +56,7 @@ nodes:
   rectifier_node: "rectifier_node/switch"
   graph_planner_node: "graph_planner_node/switch"
   target_selection_node: "target_selection_node/switch"
+  ekf_localization_node: "ekf_localization_node/switch"
 
 
 # Define state transitions
@@ -73,6 +74,7 @@ states:
       - stop_line_filter_node
       - ground_projection_node
       - anti_instagram
+      - ekf_localization_node
     lights: "GREEN"
 
   IDLE:
@@ -80,6 +82,7 @@ states:
       target_specified: "LANE_FOLLOWING"
     active_nodes:
       - target_selection_node
+      - ekf_localization_node
     lights: "WHITE"
 
 
@@ -96,6 +99,7 @@ states:
       - stop_line_filter_node
       - unicorn_intersection_node
       - graph_planner_node
+      - ekf_localization_node
     lights: "RED"
 
   STOP_SIGN_INTERSECTION:
@@ -107,6 +111,7 @@ states:
       - random_april_tag_turns_node
       - unicorn_intersection_node
       - graph_planner_node
+      - ekf_localization_node
     lights: "WHITE"
 
   INTERSECTION_CONTROL:
@@ -118,3 +123,4 @@ states:
       - lane_controller_node
       - unicorn_intersection_node
       - graph_planner_node
+      - ekf_localization_node

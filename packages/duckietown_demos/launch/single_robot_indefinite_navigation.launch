@@ -45,5 +45,8 @@
 		<!-- Target Selection -->
 		<arg name="target_selection" default="true"/>
 
+		<!-- ekf localization node -->
+		<arg name="ekf_localization_node" default="true"/>
+
 	</include>
 </launch>
