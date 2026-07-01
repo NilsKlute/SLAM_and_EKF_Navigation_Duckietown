@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import numpy as np
-
+import time
 import rospy
 from duckietown.dtros import DTParam, DTROS, NodeType, ParamType
 from duckietown_msgs.msg import BoolStamped, FSMState, LanePose, SegmentList, StopLineReading
@@ -60,10 +60,13 @@ class GraphPlannerNode(DTROS):
         # HARDCODED straight turn
         cmd_msg.data = 1
 
+        # wait for april tags turn node to get activated
+        time.sleep(0.7)
+        rospy.loginfo("Decision has been made")
         self.pub_directional_cmd.publish(cmd_msg)
 
 
 
 if __name__ == "__main__":
-    graph_planner_node = GraphPlannerNode(node_name="graph_planner")
+    graph_planner_node = GraphPlannerNode(node_name="graph_planner_node")
     rospy.spin()

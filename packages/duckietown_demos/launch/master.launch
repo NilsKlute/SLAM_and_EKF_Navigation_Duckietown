@@ -442,8 +442,8 @@
 
     <!-- Start graph planner -->
     <group if="$(arg graph_planner)">
-        <remap from="graph_planner/target_location" to="target_selection/target_location"/>
-        <remap from="~graph_planner/at_stop_line" to="stop_line_filter_node/at_stop_line"/>
+        <remap from="graph_planner_node/target_location" to="target_selection_node/target_location"/>
+        <remap from="graph_planner_node/at_stop_line" to="stop_line_filter_node/at_stop_line"/>
         <include file="$(find navigation)/launch/graph_planner_node.launch">
             <arg name="veh" value="$(arg veh)"/>
             <arg name="param_file_name" value="$(arg param_file_name)"/>
@@ -467,7 +467,6 @@
         <remap from="random_april_tag_turns_node/mode" to="fsm_node/mode"/>
         <remap from="random_april_tag_turns_node/available_turns" to="intersection_type_detector_node/available_turns"/>
         <remap from="random_april_tag_turns_node/directional_cmd" to="graph_planner_node/directional_cmd"/>
-        <remap from="random_april_tag_turns_node/turn_type" to="intersection_navigation_node/turn_type"/>
 
         <include file="$(find navigation)/launch/random_april_tag_turns_node.launch">
             <arg name="veh" value="$(arg veh)"/>

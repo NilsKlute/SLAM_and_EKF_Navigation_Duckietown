@@ -37,7 +37,7 @@ class RandomAprilTagTurnsNode(DTROS):
         rospy.loginfo(f"[{self.node_name}] Initialzed.")
 
     def dir_cmd_cb(self, turn_type_msg):
-        self.turn_type == turn_type_msg.data
+        self.turn_type = turn_type_msg.data
 
     def decide_cb(self, avail_turns_msg):
         
@@ -48,6 +48,10 @@ class RandomAprilTagTurnsNode(DTROS):
             return
         
         avail_turns = avail_turns_msg.data
+
+        if len(avail_turns) == 0:
+            rospy.loginfo("No turns detected by the Intersection Detection Node")
+            return
 
         turn_decision_msg = Int16()
         if self.turn_type in avail_turns:

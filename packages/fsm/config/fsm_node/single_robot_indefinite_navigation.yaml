@@ -66,7 +66,7 @@ global_transitions:
 states:
   NORMAL_JOYSTICK_CONTROL:
     transitions:
-      joystick_override_off: "IDLE"
+      joystick_override_off: "LANE_FOLLOWING"
     active_nodes:
       - lane_filter_node
       - line_detector_node
@@ -117,5 +117,4 @@ states:
       - lane_filter_node
       - lane_controller_node
       - unicorn_intersection_node
-      - random_april_tag_turns_node
       - graph_planner_node

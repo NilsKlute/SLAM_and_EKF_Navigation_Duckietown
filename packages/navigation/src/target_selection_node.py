@@ -49,9 +49,10 @@ class TargetSelectionNode(DTROS):
         # Transfer Target Label to Planner
         self.pub_target_location.publish(send_target_msg)
 
+        return SetFSMStateResponse()
 
         
 
 if __name__ == "__main__":
-    target_selection_node = TargetSelectionNode(node_name="target_selection")
+    target_selection_node = TargetSelectionNode(node_name="target_selection_node")
     rospy.spin()
