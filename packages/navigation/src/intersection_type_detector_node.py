@@ -74,6 +74,8 @@ class IntersectionTypeDetectorNode(DTROS):
 
         self.pub_topic_avail_turns = rospy.Publisher("~available_turns", Int64MultiArray, queue_size=1)
 
+        self.pub_debug_image = rospy.Publisher("~debug/clusters/compressed", CompressedImage, queue_size=1)
+
         if cv2.cuda.getCudaEnabledDeviceCount() > 0:
             self.loginfo("Using CUDA GPU for line detection.")
             self.cuda_enabled = True
@@ -127,7 +129,7 @@ class IntersectionTypeDetectorNode(DTROS):
                 bgr_img = np.fliplr(bgr_img)
             
             height, width = bgr_img.shape[:2]
-            bgr_img = bgr_img[0 : height - 30, :]
+            bgr_img = bgr_img[0 : height - 50, :]
                 
             # Convert from BGR to RGB (for plotting) and BGR to HSV (for masking)
             rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
@@ -272,6 +274,23 @@ class IntersectionTypeDetectorNode(DTROS):
                 avail_turns_msg.data = available_turns
 
                 self.pub_topic_avail_turns.publish(avail_turns_msg)
+
+                # Debug image: faint background with cluster pixels overlaid
+                debug_img = (bgr_img.astype(np.float32) * 0.25).astype(np.uint8)
+                cluster_colors = [
+                    (0, 0, 255), (0, 255, 0), (255, 0, 0),
+                    (0, 255, 255), (255, 0, 255), (255, 255, 0),
+                ]
+                for k in set(labels):
+                    if k == -1:
+                        continue
+                    color = cluster_colors[k % len(cluster_colors)]
+                    pts = pixel_coords[labels == k]
+                    debug_img[pts[:, 1], pts[:, 0]] = color
+
+                debug_msg = self.bridge.cv2_to_compressed_imgmsg(debug_img)
+                debug_msg.header = image_msg.header
+                self.pub_debug_image.publish(debug_msg)
             
     
     def thresholds_cb(self, thresh_msg):

@@ -2,6 +2,7 @@
 import numpy as np
 import time
 import rospy
+import random
 from duckietown.dtros import DTParam, DTROS, NodeType, ParamType
 from duckietown_msgs.msg import BoolStamped, FSMState, LanePose, SegmentList, StopLineReading
 from geometry_msgs.msg import Pose2D
@@ -58,11 +59,11 @@ class GraphPlannerNode(DTROS):
 
         cmd_msg = Int64()
         # HARDCODED straight turn
-        cmd_msg.data = 1
+        cmd_msg.data = 0 #random.randint(0, 2)
 
         # wait for april tags turn node to get activated
         time.sleep(0.7)
-        rospy.loginfo("Decision has been made")
+        rospy.loginfo(f"Planners decision has been made to to direction ID {cmd_msg.data}")
         self.pub_directional_cmd.publish(cmd_msg)
 
 

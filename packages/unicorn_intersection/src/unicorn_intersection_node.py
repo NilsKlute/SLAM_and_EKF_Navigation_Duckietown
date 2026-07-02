@@ -57,10 +57,24 @@ class UnicornIntersectionNode(DTROS):
         )
         self.pub_intersection_go = rospy.Publisher("~intersection_go", BoolStamped, queue_size=1)
 
+        # ================================================================
+        # HARDCODED EXPERIMENT HYPERPARAMETERS
+        # ================================================================
+        self.HC_SPEED            = 0.25   # forward velocity [m/s]
+        self.HC_OMEGA_LEFT       =  0.75   # angular velocity for left turn [rad/s]
+        self.HC_OMEGA_STRAIGHT   =  0.0   # angular velocity going straight [rad/s]
+        self.HC_OMEGA_RIGHT      = -1.7   # angular velocity for right turn [rad/s]
+        self.HC_DURATION_LEFT    =  4   # drive time for left turn [s]
+        self.HC_DURATION_STRAIGHT=  4   # drive time going straight [s]
+        self.HC_DURATION_RIGHT   =  1.6   # drive time for right turn [s]
+        # ================================================================
+
+        self.hc_start_time = None
+
         self.ts_encoders = message_filters.ApproximateTimeSynchronizer(
             [self.sub_encoder_left, self.sub_encoder_right], 1, 1
         )
-        self.ts_encoders.registerCallback(self.cb_ts_encoders)
+        self.ts_encoders.registerCallback(self.cb_ts_encoders_hardcoded)
 
         self.params_update = rospy.Timer(rospy.Duration.from_sec(1.0), self.updateParams)
         self.reset_odometry()
@@ -159,6 +173,53 @@ class UnicornIntersectionNode(DTROS):
         self.wheelbase = 0.108
         self.iter_ = 0
 
+    # ================================================================
+    # HARDCODED EXPERIMENT CALLBACK
+    # ================================================================
+    def cb_ts_encoders_hardcoded(self, _left_encoder, _right_encoder):
+        if self.internal_state != "EXECUTING":
+            return
+
+        now = rospy.get_time()
+        if self.hc_start_time is None:
+            self.hc_start_time = now
+
+        elapsed = now - self.hc_start_time
+
+        if self.turn_type == 0:
+            omega    = self.HC_OMEGA_LEFT
+            duration = self.HC_DURATION_LEFT
+        elif self.turn_type == 1:
+            omega    = self.HC_OMEGA_STRAIGHT
+            duration = self.HC_DURATION_STRAIGHT
+        else:  # turn_type == 2
+            omega    = self.HC_OMEGA_RIGHT
+            duration = self.HC_DURATION_RIGHT
+
+        if elapsed < duration:
+            cmd = Twist2DStamped()
+            cmd.header.stamp = rospy.Time.now()
+            cmd.v     = self.HC_SPEED
+            cmd.omega = omega
+            self.car_cmd.publish(cmd)
+        else:
+
+            self.internal_state      = "READY"
+            self.stop_line_pose_received = False
+            self.turn_type_received  = False
+            self.hc_start_time       = None
+
+            msg_done = BoolStamped()
+            msg_done.data = True
+            self.pub_int_done.publish(msg_done)
+            self.reset_odometry()
+            rospy.loginfo("[unicorn_intersection_node] hardcoded intersection complete")
+            self.pub_trans_done.publish(msg_done)
+            rospy.loginfo("[unicorn_intersection_node] transition to lane following complete")
+
+    # ================================================================
+    # ORIGINAL WAYPOINT / DEAD-RECKONING CALLBACK (kept for reference)
+    # ================================================================
     def cb_ts_encoders(self, left_encoder, right_encoder):
         if self.internal_state != "EXECUTING": 
             return

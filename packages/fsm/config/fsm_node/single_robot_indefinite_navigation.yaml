@@ -73,6 +73,7 @@ states:
       - ground_projection_node
       - anti_instagram
       - ekf_localization_node
+      - intersection_type_detector_node
     lights: "GREEN"
 
   IDLE:
@@ -107,6 +108,7 @@ states:
       - anti_instagram
       - intersection_type_detector_node
       - random_april_tag_turns_node
+      - stop_line_filter_node
       - unicorn_intersection_node
       - graph_planner_node
       - ekf_localization_node
