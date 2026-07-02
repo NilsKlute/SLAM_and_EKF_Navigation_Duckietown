@@ -48,5 +48,9 @@
 		<!-- ekf localization node -->
 		<arg name="ekf_localization_node" default="true"/>
 
+		<!-- dead-reckoning-->
+		<arg name="/localization" default="True"/>
+		<arg name="/localization/deadreckoning" default="True"/>
+
 	</include>
 </launch>

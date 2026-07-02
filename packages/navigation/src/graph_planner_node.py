@@ -37,6 +37,8 @@ class GraphPlannerNode(DTROS):
 
         self.target = None
 
+        self.decision_published = False
+
 
         ## publishers and subscribers
         self.sub_target = rospy.Subscriber("~target_location", String, self.cb_init_navigation)
@@ -45,6 +47,7 @@ class GraphPlannerNode(DTROS):
         #self.sub_position = rospy.Subscriber("~lane_pose", Float64MultiArray, self.cb_localize)
 
         self.sub_stop_line_filter = rospy.Subscriber("~at_stop_line", BoolStamped, self.cb_directional_cmd)
+        self.sub_stop_line_filter = rospy.Subscriber("~intersection_go", BoolStamped, self.cb_reset_decided_planning)
 
         self.pub_arrived_target = rospy.Publisher("~arrived_at_target", BoolStamped, queue_size=1, latch=True)
         self.pub_directional_cmd = rospy.Publisher("~directional_cmd", Int64, queue_size=1)
@@ -57,14 +60,22 @@ class GraphPlannerNode(DTROS):
 
     def cb_directional_cmd(self, arrived_at_stop_lane_msg):
 
+        if self.decision_published:
+            return
+
         cmd_msg = Int64()
-        # HARDCODED straight turn
-        cmd_msg.data = 0 #random.randint(0, 2)
+        # choose random direction
+        cmd_msg.data = random.randint(0, 2)
 
         # wait for april tags turn node to get activated
         time.sleep(0.7)
-        rospy.loginfo(f"Planners decision has been made to to direction ID {cmd_msg.data}")
+        rospy.loginfo(f"Planners decision has been made to direction ID {cmd_msg.data}")
         self.pub_directional_cmd.publish(cmd_msg)
+
+        self.decision_published = True
+
+    def cb_reset_decided_planning(self, msg):
+        self.decision_published = False
 
 
 

@@ -214,7 +214,7 @@ class UnicornIntersectionNode(DTROS):
             self.pub_int_done.publish(msg_done)
             self.reset_odometry()
             rospy.loginfo("[unicorn_intersection_node] hardcoded intersection complete")
-            self.pub_trans_done.publish(msg_done)
+            #self.pub_trans_done.publish(msg_done)
             rospy.loginfo("[unicorn_intersection_node] transition to lane following complete")
 
     # ================================================================

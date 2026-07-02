@@ -55,6 +55,7 @@ nodes:
   graph_planner_node: "graph_planner_node/switch"
   target_selection_node: "target_selection_node/switch"
   ekf_localization_node: "ekf_localization_node/switch"
+  deadreckoning_node: "deadreckoning_node/switch"
 
 
 # Define state transitions
@@ -74,6 +75,7 @@ states:
       - anti_instagram
       - ekf_localization_node
       - intersection_type_detector_node
+      - deadreckoning_node
     lights: "GREEN"
 
   IDLE:
@@ -116,7 +118,7 @@ states:
 
   INTERSECTION_CONTROL:
     transitions:
-      intersection_done: "TRANSITION"
+      intersection_done: "LANE_FOLLOWING"
     active_nodes:
       - line_detector_node
       - lane_filter_node
