@@ -1,0 +1,5 @@
+# Node IDs correspond to VERTEX_SE3:QUAT IDs from manual_SLAM_loop.g2o.
+# Update these IDs to match the actual vertex IDs at the desired locations.
+"Home": 1
+"Target A": 110
+"Target B": 130

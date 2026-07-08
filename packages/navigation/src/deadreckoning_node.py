@@ -77,9 +77,9 @@ class DeadReckoningNode(DTROS):
         self.total_dist = 0
 
         # Setup subscribers
-        self.sub_encoder_left = message_filters.Subscriber("~left_wheel", WheelEncoderStamped)
+        self.sub_encoder_left = message_filters.Subscriber("~left_wheel_encoder_driver_node/tick", WheelEncoderStamped)
 
-        self.sub_encoder_right = message_filters.Subscriber("~right_wheel", WheelEncoderStamped)
+        self.sub_encoder_right = message_filters.Subscriber("~right_wheel_encoder_driver_node/tick", WheelEncoderStamped)
 
         # Setup the time synchronizer
         self.ts_encoders = message_filters.ApproximateTimeSynchronizer(
@@ -118,12 +118,12 @@ class DeadReckoningNode(DTROS):
         dtl = left_encoder.header.stamp - self.left_encoder_last.header.stamp
         dtr = right_encoder.header.stamp - self.right_encoder_last.header.stamp
         if dtl.to_sec() < 0 or dtr.to_sec() < 0:
-            self.loginfo("Ignoring stale encoder message")
+            #self.loginfo("Ignoring stale encoder message")
             return
 
         left_dticks = left_encoder.data - self.left_encoder_last.data
         right_dticks = right_encoder.data - self.right_encoder_last.data
-
+        
         left_distance = left_dticks * 1.0 / self.ticks_per_meter
         right_distance = right_dticks * 1.0 / self.ticks_per_meter
 

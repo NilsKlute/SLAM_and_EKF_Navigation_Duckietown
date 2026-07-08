@@ -275,27 +275,22 @@ class EKFLocalizationNode(DTROS):
 
 
     def doPredict(self, event=None):
-
-
-        if self.delta_phi_right == 0 and self.delta_phi_left ==0:
-            # we haven't moved no need to predict
-            return
-
-        with self.left_wheel_mutex:
-            with self.right_wheel_mutex:
-
-
-                dX, dT = get_odometry(
-                    self.R,
-                    self.baseline,
-                    self.delta_phi_left,
-                    self.delta_phi_right
-                )
-
-                self.ekf.predict(dX, dT)
-                self.delta_phi_left = 0
-                self.delta_phi_right = 0
-                self.doUpdate()
+        if self.delta_phi_right != 0 or self.delta_phi_left != 0:
+            with self.left_wheel_mutex:
+                with self.right_wheel_mutex:
+                    dX, dT = get_odometry(
+                        self.R,
+                        self.baseline,
+                        self.delta_phi_left,
+                        self.delta_phi_right
+                    )
+                    self.ekf.predict(dX, dT)
+                    self.delta_phi_left = 0
+                    self.delta_phi_right = 0
+        self.doUpdate()
+        # Always publish the pose at 10 Hz, even when the vision update
+        # is unavailable (no camera model / no image yet)
+        self.publish_pose()
 
 
     def cb_info(self, msg):
@@ -305,28 +300,38 @@ class EKFLocalizationNode(DTROS):
         except BaseException:
             pass
         H, W = msg.height, msg.width
-        
-        #BEV_SLAM
-        self.homography = self.load_extrinsics()
-        print("self.homography",self.homography)
-        # create new camera info
-        self.camera_model = CameraModel(
-            width=W,
-            height=H,
-            K=np.reshape(msg.K, (3, 3)),
-            D=np.reshape(msg.D, (5,)),
-            P=np.reshape(msg.P, (3, 4)),
-        )
-        print("self.camera_model",self.camera_model)
-        self.camera_model.H = self.homography
-        print("self.camera_model",self.camera_model)
-        self.projector = GroundProjector(self.camera_model)
+
+        d_arr = np.array(msg.D, dtype=float)
+        if len(d_arr) != 5:
+            self.logwarn(f"Camera D has {len(d_arr)} coefficients, expected 5 — padding with zeros")
+            d_padded = np.zeros(5)
+            d_padded[:min(len(d_arr), 5)] = d_arr[:5]
+            d_arr = d_padded
+
+        try:
+            self.camera_model = CameraModel(
+                width=W,
+                height=H,
+                K=np.reshape(msg.K, (3, 3)),
+                D=d_arr,
+                P=np.reshape(msg.P, (3, 4)),
+            )
+        except Exception as e:
+            self.logerr(f"CameraModel construction failed: {e} — EKF runs without camera model")
+            return
 
         self.rectifier = Rectifier(self.camera_model)
         self.rect_camera_K, _ = cv2.getOptimalNewCameraMatrix(
             self.camera_model.K, self.camera_model.D, (W, H), 0.0
         )
-        self.bev_slam = Bev_slam(self.veh , self.rectifier , self.projector)
+
+        self.homography = self.load_extrinsics()
+        if self.homography is not None and self.camera_model is not None:
+            self.camera_model.H = self.homography
+            self.projector = GroundProjector(self.camera_model)
+            self.bev_slam = Bev_slam(self.veh, self.rectifier, self.projector)
+        else:
+            self.logwarn("No extrinsic calibration found — BEV_SLAM disabled, EKF continues")
 
 
     
@@ -471,7 +476,6 @@ class EKFLocalizationNode(DTROS):
         #print("ids:",ids)
         self.publish_landmarks(ids)
         self.publish_detections(image_gray, detections, self.latest_img.header)
-        self.publish_pose(self.latest_img.header)
 
     def publish_pose(self, header=None):
 
