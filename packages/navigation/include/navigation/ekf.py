@@ -12,103 +12,118 @@ class EKF:
     def __init__(self, q_0: np.ndarray, P_0: np.ndarray, Q: np.ndarray, R: np.ndarray):
         self.q = q_0
         self.P = P_0
-        # The node passes Q as 3x3 with entries [Q_xx, 0, 0; 0, Q_yy, 0; 0, 0, Q_tt],
-        # but our noise vector is only [dX, dT] (2D), so W is 3x2 and we need a 2x2 Q.
-        # Extract Q_xx = Q[0,0] and Q_tt = Q[2,2].
         if Q.shape == (3, 3):
-            self.Q = np.array([
-                [Q[0, 0], 0.0     ],
-                [0.0,     Q[2, 2] ],
-            ])
+            self.Q = np.array([[Q[0, 0], 0.0], [0.0, Q[2, 2]]])
         else:
-            self.Q = Q  # already 2x2
+            self.Q = Q
         self.R = R
         self.q_mutex = Lock()
+        self.history = []  # one entry per predict() call, for RTS smoothing
 
     def predict(self, dX, dT):
-        #print("predict")
         with self.q_mutex:
             theta = self.q[2]
+            q_prior = self.q.copy()
 
-            # Step 1: Propagate state using the unicycle kinematic model
             self.q[0] = self.q[0] + dX * np.cos(theta)
             self.q[1] = self.q[1] + dX * np.sin(theta)
             self.q[2] = self.q[2] + dT
             self.q[2] = wrap_angle(self.q[2])
 
-            # Step 2: Jacobians of the process model
-            #
-            # F = df/dq  (3x3) — how the state maps to itself
-            #     d/dx [ x + dX*cos(θ) ]   →  row 0: [1,  0,  -dX*sin(θ)]
-            #     d/dy [ y + dX*sin(θ) ]   →  row 1: [0,  1,   dX*cos(θ)]
-            #     d/dθ [ θ + dT        ]   →  row 2: [0,  0,   1         ]
             F = np.array([
-                [1.0,  0.0, -dX * np.sin(theta)],
-                [0.0,  1.0,  dX * np.cos(theta)],
-                [0.0,  0.0,  1.0               ],
+                [1.0, 0.0, -dX * np.sin(theta)],
+                [0.0, 1.0,  dX * np.cos(theta)],
+                [0.0, 0.0,  1.0               ],
             ])
-
-            # W = df/dw  (3x2) — how additive noise on [dX, dT] enters the state
-            #     d/d(dX) [x + dX*cos(θ)]  →  col 0: [cos(θ), sin(θ), 0]
-            #     d/d(dT) [θ + dT]         →  col 1: [0,      0,      1]
             W = np.array([
                 [np.cos(theta), 0.0],
                 [np.sin(theta), 0.0],
                 [0.0,           1.0],
             ])
 
-            # Step 3: Propagate the covariance
-            #   P = F P Fᵀ + W Q Wᵀ
             self.P = F @ self.P @ F.T + W @ self.Q @ W.T
 
-    def update(self, z: np.ndarray, tag_xy: np.ndarray):
-        #print("update")
+            # Placeholder filt = pred; overwritten by finalize_step() if an
+            # update() happens this cycle. If no update happens, this is
+            # already the correct "filtered" value (no measurement to fuse).
+            self.history.append({
+                'q_prior': q_prior,
+                'F':       F,
+                'q_pred':  self.q.copy(),
+                'P_pred':  self.P.copy(),
+                'q_filt':  self.q.copy(),
+                'P_filt':  self.P.copy(),
+            })
 
-        """
-        z      : [range, bearing]  — measured range (m) and bearing (rad) to the tag
-        tag_xy : [tag_x, tag_y]   — known tag position in world frame
-        """
+    def update(self, z: np.ndarray, tag_xy: np.ndarray):
+        # ... unchanged from your version ...
         with self.q_mutex:
             tag_x, tag_y = tag_xy[0], tag_xy[1]
             x, y, theta = self.q[0], self.q[1], self.q[2]
-
-            # Step 1: Predicted measurement from current state estimate
-            dx = tag_x - x
-            dy = tag_y - y
+            dx, dy = tag_x - x, tag_y - y
             r = np.sqrt(dx**2 + dy**2)
-
-            # Guard against a tag sitting exactly on the robot
             if r < 1e-6:
                 return
-
-            rng_pred     = r
-            bearing_pred = wrap_angle(np.arctan2(dy, dx) - theta)
-            z_pred       = np.array([rng_pred, bearing_pred])
-
-            # Step 2: Innovation (wrap the bearing component)
-            y_innov    = z - z_pred
+            z_pred = np.array([r, wrap_angle(np.arctan2(dy, dx) - theta)])
+            y_innov = z - z_pred
             y_innov[1] = wrap_angle(y_innov[1])
-
-            # Step 3: Measurement Jacobian  H = dh/dq  (2x3)
-            #
-            # h = [ sqrt((lx-x)²+(ly-y)²),  atan2(ly-y, lx-x) - θ ]
-            #
-            # ∂r/∂x = -dx/r,   ∂r/∂y = -dy/r,   ∂r/∂θ = 0
-            # ∂φ/∂x =  dy/r²,  ∂φ/∂y = -dx/r²,  ∂φ/∂θ = -1
-            H = np.array([
-                [-dx / r,   -dy / r,   0.0],
-                [ dy / r**2, -dx / r**2, -1.0],
-            ])
-
-            # Step 4: Kalman gain
-            #   K = P Hᵀ (H P Hᵀ + R)⁻¹
+            H = np.array([[-dx / r, -dy / r, 0.0],
+                          [dy / r**2, -dx / r**2, -1.0]])
             S = H @ self.P @ H.T + self.R
             K = self.P @ H.T @ np.linalg.inv(S)
-
-            # Step 5: Update state and covariance
-            self.q   = self.q + K @ y_innov
+            self.q = self.q + K @ y_innov
             self.q[2] = wrap_angle(self.q[2])
+            I_KH = np.eye(3) - K @ H
+            self.P = I_KH @ self.P @ I_KH.T + K @ self.R @ K.T
 
-            # Joseph form for numerical stability: P = (I - KH) P (I - KH)ᵀ + K R Kᵀ
-            I_KH    = np.eye(3) - K @ H
-            self.P  = I_KH @ self.P @ I_KH.T + K @ self.R @ K.T
+    def finalize_step(self):
+        """Call once per predict() cycle, after any update() calls, so the
+        most recent history entry reflects the post-measurement state."""
+        with self.q_mutex:
+            if not self.history:
+                return
+            self.history[-1]['q_filt'] = self.q.copy()
+            self.history[-1]['P_filt'] = self.P.copy()
+
+    def rts_smooth(self):
+        """
+        Extended RTS smoother backward pass. Returns an (N,3) array of
+        smoothed [x, y, theta], oldest to newest, over the stored history.
+        """
+        print("rts_smooth")
+        with self.q_mutex:
+            n = len(self.history)
+            if n == 0:
+                return np.zeros((0, 3))
+
+            q_smooth = [None] * n
+            P_smooth = [None] * n
+            q_smooth[-1] = self.history[-1]['q_filt'].copy()
+            P_smooth[-1] = self.history[-1]['P_filt'].copy()
+
+            for k in range(n - 2, -1, -1):
+                F_next      = self.history[k + 1]['F']
+                P_pred_next = self.history[k + 1]['P_pred']
+                q_pred_next = self.history[k + 1]['q_pred']
+                P_filt_k    = self.history[k]['P_filt']
+                q_filt_k    = self.history[k]['q_filt']
+
+                # Regularize: your P_0/Q params currently default to 0.0 if
+                # unset in the calibration yaml, which makes P_pred singular.
+                P_pred_reg = P_pred_next + np.eye(3) * 1e-9
+                try:
+                    P_pred_inv = np.linalg.inv(P_pred_reg)
+                except np.linalg.LinAlgError:
+                    P_pred_inv = np.linalg.pinv(P_pred_reg)
+
+                C_k = P_filt_k @ F_next.T @ P_pred_inv
+
+                innov = q_smooth[k + 1] - q_pred_next
+                innov[2] = wrap_angle(innov[2])
+
+                q_smooth[k] = q_filt_k + C_k @ innov
+                q_smooth[k][2] = wrap_angle(q_smooth[k][2])
+                P_smooth[k] = P_filt_k + C_k @ (P_smooth[k + 1] - P_pred_next) @ C_k.T
+
+            return np.array(q_smooth)
+        

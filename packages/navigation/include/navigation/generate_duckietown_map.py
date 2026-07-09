@@ -448,3 +448,4 @@ if __name__ == "__main__":
     # gc.add_edges(edges)
     # gc.pickle_save()
     duckietown_graph.draw(script_dir="out/generate_duckietown_map", map_name="duckietown_226")
+

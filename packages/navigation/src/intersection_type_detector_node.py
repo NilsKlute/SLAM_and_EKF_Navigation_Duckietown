@@ -159,7 +159,7 @@ class IntersectionTypeDetectorNode(DTROS):
 
                 # Number of clusters found (excluding noise labeled as -1)
                 num_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-                print(f"Found {num_clusters} distinct red cluster(s).")
+                #print(f"Found {num_clusters} distinct red cluster(s).")
 
                 
 
@@ -263,12 +263,12 @@ class IntersectionTypeDetectorNode(DTROS):
                 if has_right: available_turns.append(2)
 
                 # --- Print Structured Output ---
-                rospy.loginfo(f"--- Slope-Refined Decision Matrix ---")
-                rospy.loginfo(f"Clusters Evaluated: {len(cluster_summary)}")
+                #rospy.loginfo(f"--- Slope-Refined Decision Matrix ---")
+                #rospy.loginfo(f"Clusters Evaluated: {len(cluster_summary)}")
                 for k, data in cluster_summary.items():
                     line_type = "Horizontal (Middle)" if data['is_horizontal'] else "Steep/Angled (Side)"
-                    rospy.loginfo(f"  * Cluster {k}: Center X={data['centroid_x']:.1f}, Slope={data['slope']:.3f} -> {line_type}")
-                rospy.loginfo(f"Encoded Output     : {available_turns}")
+                    #rospy.loginfo(f"  * Cluster {k}: Center X={data['centroid_x']:.1f}, Slope={data['slope']:.3f} -> {line_type}")
+                #rospy.loginfo(f"Encoded Output     : {available_turns}")
 
                 avail_turns_msg = Int64MultiArray()
                 avail_turns_msg.data = available_turns
