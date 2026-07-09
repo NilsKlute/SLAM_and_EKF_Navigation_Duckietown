@@ -1,0 +1,14 @@
+<launch>
+    <arg name="veh" doc="Name of vehicle. ex: megaman"/>
+    <!-- Points at the same label map the graph_planner uses. Override with
+         .../label_map_slam.yaml when running RTAB/SLAM localization. -->
+    <arg name="label_map_file" default="$(find navigation)/config/graph_planner_node/label_map_ekf.yaml"/>
+
+    <arg name="pkg_name" value="navigation"/>
+    <arg name="node_name" value="target_gui_node"/>
+
+    <node name="$(arg node_name)" pkg="$(arg pkg_name)" type="$(arg node_name).py" output="screen" required="true">
+        <param name="veh" value="$(arg veh)"/>
+        <param name="label_map_file" value="$(arg label_map_file)"/>
+    </node>
+</launch>

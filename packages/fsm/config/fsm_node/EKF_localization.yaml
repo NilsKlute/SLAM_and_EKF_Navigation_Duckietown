@@ -107,6 +107,7 @@ states:
   STOP_SIGN_INTERSECTION:
     transitions:
       stop_sign_intersection_go: "INTERSECTION_CONTROL"
+      target_reached: "IDLE"
     active_nodes:
       - anti_instagram
       - intersection_type_detector_node
@@ -120,6 +121,7 @@ states:
   INTERSECTION_CONTROL:
     transitions:
       intersection_done: "LANE_FOLLOWING"
+      target_reached: "IDLE"
     active_nodes:
       - line_detector_node
       - lane_filter_node

@@ -397,10 +397,10 @@ class EKFLocalizationNode(DTROS):
         # Decompress the image
         image_rgb = compressed_imgmsg_to_rgb(self.latest_img)
 
-        #rect_image = self.rectifier.rectify(image_rgb, interpolation=cv2.INTER_CUBIC)
+        rect_image = self.rectifier.rectify(image_rgb, interpolation=cv2.INTER_CUBIC)
 
         # Convert to grayscale for AprilTag detection
-        #rect_image_gray = cv2.cvtColor(rect_image, cv2.COLOR_RGB2GRAY)
+        rect_image_gray = cv2.cvtColor(rect_image, cv2.COLOR_RGB2GRAY)
         image_gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
 
         # Camera parameters for pose estimation
@@ -417,7 +417,7 @@ class EKFLocalizationNode(DTROS):
         #print(f"image shape: {image_gray.shape}, dtype: {image_gray.dtype}, min: {image_gray.min()}, max: {image_gray.max()}")
 
         detections = self.apriltag_detector.detect(
-            image_gray,
+            rect_image_gray,
             estimate_tag_pose=True,
             camera_params=camera_params,
             tag_size=tag_size
@@ -475,7 +475,7 @@ class EKFLocalizationNode(DTROS):
         ids = [det.tag_id for det in detections]
         #print("ids:",ids)
         self.publish_landmarks(ids)
-        self.publish_detections(image_gray, detections, self.latest_img.header)
+        self.publish_detections(rect_image_gray, detections, self.latest_img.header)
 
     def publish_pose(self, header=None):
 

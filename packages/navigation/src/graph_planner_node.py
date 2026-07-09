@@ -29,7 +29,7 @@ class GraphPlannerNode(DTROS):
         self.decision_published = False
         self.init_plan = False
 
-        # --- Params ---
+        # --------------------- Params ------------------------------
         self.localization_type  = rospy.get_param("~localization_type", "EKF")
         self.use_cached         = rospy.get_param("~use_cached", False)
         self.data_dir           = rospy.get_param("~data_dir", "/data/graph_planner")
@@ -50,7 +50,9 @@ class GraphPlannerNode(DTROS):
         self.turn_angle_thresh_deg = rospy.get_param("~turn_angle_threshold_deg", 35.0)
         self.u_turn_thresh         = np.radians(rospy.get_param("~u_turn_thresh_deg", 120.0))
 
-        # --- Graph loading ---
+
+
+        # ------------------- Graph loading ------------------------------
         self.label_map = {}
         os.makedirs(self.data_dir, exist_ok=True)
         cached_path = os.path.join(self.data_dir, f"clustered_nodes_{self.localization_type}.txt")
@@ -99,7 +101,9 @@ class GraphPlannerNode(DTROS):
         self.plan = None
         self.curr_node = None
 
-        # --- Subscribers ---
+
+        # --------------------- Subscribers ------------------------
+
         self.sub_target = rospy.Subscriber("~target_location", String, self.cb_init_navigation)
 
         if self.localization_type == "EKF":
@@ -110,12 +114,18 @@ class GraphPlannerNode(DTROS):
         self.sub_stop_line = rospy.Subscriber("~at_stop_line", BoolStamped, self.cb_directional_cmd)
         self.sub_int_go    = rospy.Subscriber("~intersection_go", BoolStamped, self.cb_reset_decided_planning)
 
-        # --- Publishers ---
+
+         # --------------------- Publishers ------------------------
+
         self.pub_arrived_target  = rospy.Publisher("~arrived_at_target", BoolStamped, queue_size=1, latch=True)
         self.pub_directional_cmd = rospy.Publisher("~directional_cmd", Int64, queue_size=1)
         self.pub_debug_image     = rospy.Publisher("~debug_image/compressed", CompressedImage, queue_size=1)
         self._latest_pose        = (0.0, 0.0, 0.0)
         rospy.Timer(rospy.Duration(3), self._debug_image_timer)
+
+
+
+
 
     # ---- Localization callbacks ----
 
@@ -137,6 +147,9 @@ class GraphPlannerNode(DTROS):
         return 2.0 * np.arctan2(q.z, q.w)
 
     def _localize(self, x, y, theta):
+
+        self._latest_pose = (x, y, theta)
+
         if self.target is None:
             rospy.loginfo_throttle(5.0, "Localize: no target set yet")
             return
@@ -162,7 +175,6 @@ class GraphPlannerNode(DTROS):
             self.init_plan = False
             return
 
-        self._latest_pose = (x, y, theta)
 
         candidates = self.get_candidate_nodes(
             x, y, theta, max_dist=self.candidate_max_dist, k=self.candidate_k)
@@ -209,7 +221,10 @@ class GraphPlannerNode(DTROS):
                 f"A* Failed: No path from candidates {candidates}. Halting navigation.")
             self.target = None
 
-    # ---- Debug visualization ----
+
+
+
+    # ------------------ Debug visualization -------------------------
 
     def _debug_image_timer(self, _event=None):
         rx, ry, rtheta = self._latest_pose
@@ -222,7 +237,6 @@ class GraphPlannerNode(DTROS):
         return reverse.get(self.target, str(self.target))
 
     def _publish_debug_image(self, rx, ry, rtheta):
-        rospy.loginfo("Debug Image cb called")
         try:
             fig, ax = plt.subplots(figsize=(10, 10))
 
@@ -338,7 +352,10 @@ class GraphPlannerNode(DTROS):
                 nodes.append([node_id, x, y, theta])
         return np.array(nodes)
 
-    # ---- Navigation callbacks ----
+
+
+
+    # --------------------- Navigation callbacks -------------------------------
 
     def cb_init_navigation(self, target_msg):
         if target_msg.data in self.label_map:
@@ -391,7 +408,12 @@ class GraphPlannerNode(DTROS):
     def cb_reset_decided_planning(self, _msg):
         self.decision_published = False
 
-    # ---- Helper functions ----
+
+
+
+
+
+    # -------------------- Helper functions ----------------------------
 
     def normalize_angle(self, angle):
         return np.arctan2(np.sin(angle), np.cos(angle))
