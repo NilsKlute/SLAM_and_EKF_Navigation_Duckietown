@@ -1,21 +1,20 @@
 <launch>
     <arg name="veh" doc="Name of vehicle. ex: megaman"/>
-    <arg name="param_file_name" default="default" doc="Specify a param file. ex:megaman." />
+    <arg name="param_file_name" default="default" doc="Specify a param file. ex:megaman."/>
+    <arg name="localization_type" default="EKF"/>
+    <arg name="label_map_file"    default=""/>
 
     <arg name="pkg_name" value="navigation"/>
     <arg name="node_name" value="graph_planner_node"/>
 
     <group ns="$(arg veh)">
-        <node  name="$(arg node_name)" pkg="$(arg pkg_name)" type="$(arg node_name).py" output="screen" required="true">
+        <node name="$(arg node_name)" pkg="$(arg pkg_name)" type="$(arg node_name).py" output="screen" required="true">
             <rosparam command="load" file="$(find navigation)/config/$(arg node_name)/$(arg param_file_name).yaml"/>
-            <param name="veh" value="$(arg veh)" />
+            <param name="veh"              value="$(arg veh)"/>
+            <param name="localization_type" value="$(arg localization_type)"/>
+            <param name="graph_file_ekf"   value="$(find navigation)/config/graph_planner_node/ekf_loop.txt"/>
+            <param name="graph_file_slam"  value="$(find navigation)/config/graph_planner_node/manual_SLAM_loop.g2o"/>
+            <param name="label_map_file"   value="$(arg label_map_file)"/>
         </node>
-
     </group>
-
-    <!-- Publications -->
-
-    <!-- Subscriptions -->
-
-
 </launch>

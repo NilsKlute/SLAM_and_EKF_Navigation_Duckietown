@@ -21,4 +21,11 @@ canonical_goal_pose_straight: {
   theta: 0.0,
 }
 
-debug_dir: -1
+# Hardcoded experiment (cb_ts_encoders_hardcoded)
+hc_speed: 0.25
+hc_omega_left: 0.75
+hc_omega_straight: 0.0
+hc_omega_right: -1.7
+hc_duration_left: 4.0
+hc_duration_straight: 4.0
+hc_duration_right: 1.6

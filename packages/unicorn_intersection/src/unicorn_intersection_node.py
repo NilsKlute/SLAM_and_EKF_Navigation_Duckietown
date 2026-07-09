@@ -57,18 +57,6 @@ class UnicornIntersectionNode(DTROS):
         )
         self.pub_intersection_go = rospy.Publisher("~intersection_go", BoolStamped, queue_size=1)
 
-        # ================================================================
-        # HARDCODED EXPERIMENT HYPERPARAMETERS
-        # ================================================================
-        self.HC_SPEED            = 0.25   # forward velocity [m/s]
-        self.HC_OMEGA_LEFT       =  0.75   # angular velocity for left turn [rad/s]
-        self.HC_OMEGA_STRAIGHT   =  0.0   # angular velocity going straight [rad/s]
-        self.HC_OMEGA_RIGHT      = -1.7   # angular velocity for right turn [rad/s]
-        self.HC_DURATION_LEFT    =  4   # drive time for left turn [s]
-        self.HC_DURATION_STRAIGHT=  4   # drive time going straight [s]
-        self.HC_DURATION_RIGHT   =  1.6   # drive time for right turn [s]
-        # ================================================================
-
         self.hc_start_time = None
 
         self.ts_encoders = message_filters.ApproximateTimeSynchronizer(
@@ -214,7 +202,7 @@ class UnicornIntersectionNode(DTROS):
             self.pub_int_done.publish(msg_done)
             self.reset_odometry()
             rospy.loginfo("[unicorn_intersection_node] hardcoded intersection complete")
-            self.pub_trans_done.publish(msg_done)
+            #self.pub_trans_done.publish(msg_done)
             rospy.loginfo("[unicorn_intersection_node] transition to lane following complete")
 
     # ================================================================
@@ -317,6 +305,15 @@ class UnicornIntersectionNode(DTROS):
         self.canonical_goal_pose_left = self.setupParam("~canonical_goal_pose_left", default_pose)
         self.canonical_goal_pose_straight = self.setupParam("~canonical_goal_pose_straight", default_pose)
         self.speed = self.setupParam("~speed", 0.30)
+
+        # Hardcoded experiment params (cb_ts_encoders_hardcoded)
+        self.HC_SPEED             = self.setupParam("~hc_speed",             0.25)
+        self.HC_OMEGA_LEFT        = self.setupParam("~hc_omega_left",        0.75)
+        self.HC_OMEGA_STRAIGHT    = self.setupParam("~hc_omega_straight",    0.0)
+        self.HC_OMEGA_RIGHT       = self.setupParam("~hc_omega_right",      -1.7)
+        self.HC_DURATION_LEFT     = self.setupParam("~hc_duration_left",     4.0)
+        self.HC_DURATION_STRAIGHT = self.setupParam("~hc_duration_straight", 4.0)
+        self.HC_DURATION_RIGHT    = self.setupParam("~hc_duration_right",    1.6)
 
     def updateParams(self, event):
         pass

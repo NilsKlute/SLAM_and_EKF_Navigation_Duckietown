@@ -1,0 +1,6 @@
+# Node IDs correspond to sequential clustered-node IDs assigned during clustering
+# (0-indexed, order matches ekf_loop.txt after spatial+angle clustering).
+# Update these IDs after inspecting the clustered graph for your specific loop.
+"Home": 0
+"Target A": 80
+"Target B": 160

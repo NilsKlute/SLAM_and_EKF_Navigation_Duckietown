@@ -42,6 +42,10 @@ class IntersectionTypeDetectorNode(DTROS):
 
         self._traffic_mode = DTParam(f"/{self._veh}/behavior/traffic_mode", None)
 
+        self.STEEPNESS_THRESHOLD = 0.25
+        self.EPS = 10
+        self.MIN_SAMPLES = 15
+
         self.ai_thresholds_received = False
         self.anti_instagram_thresholds = dict()
         self.ai = AntiInstagram()
@@ -98,39 +102,11 @@ class IntersectionTypeDetectorNode(DTROS):
             except ValueError as e:
                 self.logerr(f"Could not decode image: {e}")
                 return
-            
-            # Perform color correction
-            if self.ai_thresholds_received:
-                obtained_image = self.ai.apply(
-                    image = obtained_image,
-                    lower_threshold = self.anti_instagram_thresholds["lower"],
-                    higher_threshold = self.anti_instagram_thresholds["higher"]
-                )
 
-            if self.cuda_enabled:
-                gpu_image = cv2.cuda_GpuMat()
-                gpu_image.upload(obtained_image)
-            else:
-                gpu_image = obtained_image
+            bgr_img = self.preprocess_image(obtained_image)
 
-            # Resize the gpu_image to the desired dimensions
-            height_original, width_original = gpu_image.shape[0:2]
-            img_size = (self._img_size[1], self._img_size[0])
-            if img_size[0] != width_original or img_size[1] != height_original:
-                if self.cuda_enabled:
-                    gpu_image = cv2.cuda.resize(gpu_image, img_size, interpolation=cv2.INTER_NEAREST)
-                else:
-                    gpu_image = cv2.resize(gpu_image, img_size, interpolation=cv2.INTER_NEAREST)
-
-            bgr_img = gpu_image[self._top_cutoff :, :, :]
-
-            # mirror the bgr_img if left-hand traffic mode is set
-            if self._traffic_mode.value == "LHT":
-                bgr_img = np.fliplr(bgr_img)
-            
-            height, width = bgr_img.shape[:2]
-            bgr_img = bgr_img[0 : height - 50, :]
                 
+            _, width = bgr_img.shape[:2]
             # Convert from BGR to RGB (for plotting) and BGR to HSV (for masking)
             rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
             hsv_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2HSV)
@@ -154,7 +130,8 @@ class IntersectionTypeDetectorNode(DTROS):
                 # 2. Apply DBSCAN
                 # eps: max distance between two samples to be considered in the same neighborhood
                 # min_samples: minimum number of pixels to form a cluster core
-                db = DBSCAN(eps=15, min_samples=15).fit(pixel_coords)
+                db = DBSCAN(eps=self.EPS, min_samples=self.MIN_SAMPLES).fit(pixel_coords)
+                #db = DBSCAN(eps=15, min_samples=15).fit(pixel_coords)
                 labels = db.labels_
 
                 # Number of clusters found (excluding noise labeled as -1)
@@ -177,10 +154,7 @@ class IntersectionTypeDetectorNode(DTROS):
 
                 
 
-                # --- CONFIGURATION PARAMETERS ---
-                # A perfectly horizontal line has a slope of 0. 
-                # Due to perspective warp, we allow a small threshold (e.g., 0.35).
-                STEEPNESS_THRESHOLD = 0.25
+                
 
                 # We need the image width to handle fallback checks if no middle line is present
                 # width = bgr_img.shape[1]
@@ -213,7 +187,7 @@ class IntersectionTypeDetectorNode(DTROS):
                         centroid_x = x_coords.mean()
                         
                         # Check if it fits our horizontal condition
-                        is_horizontal = abs(slope) < STEEPNESS_THRESHOLD
+                        is_horizontal = abs(slope) < self.STEEPNESS_THRESHOLD
                         
                         cluster_summary[k] = {
                             'centroid_x': centroid_x,
@@ -291,6 +265,42 @@ class IntersectionTypeDetectorNode(DTROS):
                 debug_msg = self.bridge.cv2_to_compressed_imgmsg(debug_img)
                 debug_msg.header = image_msg.header
                 self.pub_debug_image.publish(debug_msg)
+
+    def preprocess_image(self, obtained_image):
+        
+        # Perform color correction
+        if self.ai_thresholds_received:
+            obtained_image = self.ai.apply(
+                image = obtained_image,
+                lower_threshold = self.anti_instagram_thresholds["lower"],
+                higher_threshold = self.anti_instagram_thresholds["higher"]
+            )
+
+        if self.cuda_enabled:
+            gpu_image = cv2.cuda_GpuMat()
+            gpu_image.upload(obtained_image)
+        else:
+            gpu_image = obtained_image
+
+        # Resize the gpu_image to the desired dimensions
+        height_original, width_original = gpu_image.shape[0:2]
+        img_size = (self._img_size[1], self._img_size[0])
+        if img_size[0] != width_original or img_size[1] != height_original:
+            if self.cuda_enabled:
+                gpu_image = cv2.cuda.resize(gpu_image, img_size, interpolation=cv2.INTER_NEAREST)
+            else:
+                gpu_image = cv2.resize(gpu_image, img_size, interpolation=cv2.INTER_NEAREST)
+
+        bgr_img = gpu_image[self._top_cutoff :, :, :]
+
+        # mirror the bgr_img if left-hand traffic mode is set
+        if self._traffic_mode.value == "LHT":
+            bgr_img = np.fliplr(bgr_img)
+        
+        height, width = bgr_img.shape[:2]
+        bgr_img = bgr_img[0 : height - 50, :]
+
+        return bgr_img
             
     
     def thresholds_cb(self, thresh_msg):
