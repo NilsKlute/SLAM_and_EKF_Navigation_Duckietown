@@ -20,12 +20,28 @@ from std_msgs.msg import String
 from visualization_msgs.msg import Marker, MarkerArray
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Pose, PoseWithCovariance
-from navigation.ekf import EKF
+from navigation.ekf import *
 from navigation.odometry_utils import delta_phi, get_odometry
 from duckietown.dtros import DTROS, NodeType, TopicType
 from duckietown.utils.image.ros import compressed_imgmsg_to_rgb, rgb_to_compressed_imgmsg
 
 from navigation.BEV_SLAM import *
+from navigation.clustered_graph import (
+    cluster_nodes, build_directed_edges, visualize_clustered_graph
+)
+
+import matplotlib
+matplotlib.use("Agg")  # headless — required inside a ROS node
+import matplotlib.pyplot as plt
+from std_msgs.msg import Header
+from navigation.tile_graph import (
+    TILE_SIZE, analyze_tile_traversals, classify_tiles, plot_street_graph
+)
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
+from matplotlib.patches import Rectangle, Arc
 
 def wrap_angle(a):
     """Wrap angle to [-pi, pi]."""
@@ -88,8 +104,28 @@ class EKFLocalizationNode(DTROS):
         self.gt_pose = None
         self.latest_img = None
 
+        # in __init__, near your other BEV_SLAM state:
+        self.log_file_path = "/data/ekf_position_log.txt"
+        self.log_file = open(self.log_file_path, "a")
+
+        self.gt_log_file_path = "/data/gt_position_log.txt"
+        self.gt_log_file = open(self.gt_log_file_path, "a")
+
+        self.corrected_log_file_path = "/data/ekf_position_log_smoothed.txt"
+        rospy.on_shutdown(lambda: self.log_file.close())
+        rospy.on_shutdown(lambda: self.gt_log_file.close())
+
         # Init the parameters
         self.resetParameters()
+
+        #BEV_SLAM
+        self.camera_model = None
+        self.mapx = None
+        self.mapy = None
+        self.jpeg = TurboJPEG()
+        self.homography = None
+        self.projector = None
+        self.bev_slam = None
 
         # nominal R and L, you may change these if needed:
 
@@ -145,6 +181,17 @@ class EKFLocalizationNode(DTROS):
             decode_sharpening=0.25
         )
 
+        self.gt_trajectory = []
+        self.ekf_trajectory = []
+
+        self.pub_trajectory_plot = rospy.Publisher(
+            f"/{self.veh}/ekf_localization_node/trajectory_plot/compressed",
+            CompressedImage, queue_size=1, latch=True)
+
+        self.pub_street_graph_plot = rospy.Publisher(
+            f"/{self.veh}/ekf_localization_node/street_graph_plot/compressed",
+            CompressedImage, queue_size=1, latch=True)
+
         # Defining subscribers:
         rospy.Subscriber(
             f"/{self.veh}/camera_node/image/compressed",
@@ -153,12 +200,7 @@ class EKFLocalizationNode(DTROS):
             buff_size=10000000,
             queue_size=1,
         )
-        self.sub_camera_info = rospy.Subscriber(
-            f"/{self.veh}/camera_node/camera_info",
-            CameraInfo,
-            self.cb_info,
-            queue_size=1,
-        )
+    
 
         # Wheel encoder subscriber:
         left_encoder_topic = f"/{self.veh}/left_wheel_encoder_driver_node/tick"
@@ -202,6 +244,10 @@ class EKFLocalizationNode(DTROS):
             latch=True
         )
 
+        self.pub_clustered_graph_compare = rospy.Publisher(
+            f"/{self.veh}/ekf_localization_node/clustered_graph_compare/compressed",
+            CompressedImage, queue_size=1, latch=True)
+
         # Get the steering gain (omega_max) from the calibration file
         # It defines the maximum omega used to scale normalized steering command
         kinematics_calib = self.read_params_from_calibration_file()
@@ -213,10 +259,94 @@ class EKFLocalizationNode(DTROS):
         self.publish_landmarks([])
         self.publish_pose()
 
+        self.sub_camera_info = rospy.Subscriber(
+            f"/{self.veh}/camera_node/camera_info",
+            CameraInfo,
+            self.cb_info,
+            queue_size=1,
+        )
+
         # we will do prediction at a fixed frequency rather than asynchronously
         # when the encoder data arrives
         rospy.Timer(rospy.Duration(1.0/10.0), self.doPredict)
 
+
+    @staticmethod
+    def _fig_to_compressed_imgmsg(fig):
+        fig.canvas.draw()
+        buf = np.asarray(fig.canvas.buffer_rgba())
+        img_bgr = cv2.cvtColor(buf, cv2.COLOR_RGBA2BGR)
+        msg = CompressedImage()
+        msg.header = Header(stamp=rospy.Time.now())
+        msg.format = "jpeg"
+        msg.data = np.array(cv2.imencode('.jpg', img_bgr)[1]).tobytes()
+        return msg
+
+    def _build_trajectory_comparison_figure(self, smooth_traj):
+        print("_build_trajectory_comparison_figure")
+        fig, ax = plt.subplots(figsize=(8, 8))
+        if len(self.gt_trajectory) > 0:
+            gt = np.array(self.gt_trajectory)
+            ax.plot(gt[:, 0], gt[:, 1], color='green', linewidth=1.5, label='Ground truth')
+        if len(self.ekf_trajectory) > 0:
+            ekf = np.array(self.ekf_trajectory)
+            ax.plot(ekf[:, 0], ekf[:, 1], color='red', linewidth=1.0,
+                    linestyle='--', label='EKF (forward)')
+        if smooth_traj.shape[0] > 0:
+            ax.plot(smooth_traj[:, 0], smooth_traj[:, 1], color='blue',
+                    linewidth=1.5, label='RTS-smoothed')
+        ax.set_aspect('equal')
+        ax.set_xlabel("X [m]"); ax.set_ylabel("Y [m]")
+        ax.set_title("GT vs EKF vs RTS-smoothed trajectory")
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, linewidth=0.5, alpha=0.4)
+        return fig
+
+    def publish_corrected_trajectory_and_map(self):
+        print("publish_corrected_trajectory_and_map")
+        smooth_traj = self.ekf.rts_smooth()
+
+        if len(smooth_traj) < 2:
+            return
+
+        # -----------------------------
+        # save trajectory
+        # -----------------------------
+        self.save_smoothed_trajectory(smooth_traj)
+
+        # -----------------------------
+        # trajectory comparison
+        # -----------------------------
+        fig = self._build_trajectory_comparison_figure(smooth_traj)
+
+        self.pub_trajectory_plot.publish(
+            self._fig_to_compressed_imgmsg(fig)
+        )
+
+        plt.close(fig)
+
+        # -----------------------------
+        # rebuild map from smoothed path
+        # -----------------------------
+        tile_counts = analyze_tile_traversals(
+            smooth_traj,
+            tile_size=TILE_SIZE,
+        )
+
+        classification = classify_tiles(tile_counts)
+
+        fig, _, _, _ = plot_street_graph(
+            classification,
+            tile_counts,
+            tile_size=TILE_SIZE,
+            show=False,
+        )
+        self.pub_street_graph_plot.publish(
+            self._fig_to_compressed_imgmsg(fig)
+        )
+        print("plot_street_graph")
+        plt.close(fig)
+        #self.publish_clustered_graph_comparison(smooth_traj)
 
     #BEV_SLAM
     def read_params_from_calibration_file(self):
@@ -251,6 +381,8 @@ class EKFLocalizationNode(DTROS):
         _, _, yaw = tf.transformations.euler_from_quaternion([q.x, q.y, q.z, q.w])
         p = odom_msg.pose.pose.position
         self.gt_pose = [p.x, p.y, yaw]
+        self.gt_log_file.write(f"{p.x:.4f},{p.y:.4f},{yaw:.4f}\n")
+        self.gt_log_file.flush()
 
     def cbLeftEncoder(self, encoder_msg):
         """
@@ -405,18 +537,10 @@ class EKFLocalizationNode(DTROS):
             rospy.signal_shutdown(msg)
 
     def doUpdate(self):
-        """
-
-        Args:
-            image_msg (:obj:`sensor_msgs.msg.CompressedImage`): The received image message
-
-        """
         if self.no_update:
-            return
-
+            return False
         if self.camera_model is None:
-            return
-
+            return False
         if self.latest_img is None:
             return
         
@@ -427,20 +551,12 @@ class EKFLocalizationNode(DTROS):
 
         # Convert to grayscale for AprilTag detection
         rect_image_gray = cv2.cvtColor(rect_image, cv2.COLOR_RGB2GRAY)
-        image_gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+        #image_gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
 
-        # Camera parameters for pose estimation
-        fx = self.camera_model.K[0, 0]
-        fy = self.camera_model.K[1, 1]
-        cx = self.camera_model.K[0, 2]
-        cy = self.camera_model.K[1, 2]
+        fx = self.camera_model.K[0, 0]; fy = self.camera_model.K[1, 1]
+        cx = self.camera_model.K[0, 2]; cy = self.camera_model.K[1, 2]
         camera_params = [fx, fy, cx, cy]
-        
-        # AprilTag size in meters (Duckietown standard)
         tag_size = 0.065
-        #print("camera_params",camera_params)
-        # Detect AprilTags with pose estimation
-        #print(f"image shape: {image_gray.shape}, dtype: {image_gray.dtype}, min: {image_gray.min()}, max: {image_gray.max()}")
 
         # The C pose solver prints "Error, more than one new minimum found."
         # per tag at ~10 Hz. Capture that raw C output (rospy throttling can't
@@ -463,56 +579,52 @@ class EKFLocalizationNode(DTROS):
         #   for d in detections:
             #print(f"  id={d.tag_id}, margin={d.decision_margin:.1f}, in_map={d.tag_id in self.map}")
 
-        # Process each detection
+        tag_seen_and_matched = False
         for detection in detections:
-            #print("for detection",detection)
             tag_id = detection.tag_id
-            
-            # Check if this tag is in our map
             if tag_id not in self.map:
                 continue
-                #print("continue !!!!!!!!!!!!!!!!!")
-            
-            # Get the tag position from the map
+            tag_seen_and_matched = True
+
             tag_position = self.map[tag_id]
             tag_x, tag_y = tag_position[0], tag_position[1]
 
-            # let's calculate the exact range and bearing using the GT pose and
-            # tag location
             if self.gt_pose is None:
-                #print("return")
-                self.gt_pose = [0,0,0]
-                #return
+                self.gt_pose = [0, 0, 0]
             dx = tag_x - self.gt_pose[0]
             dy = tag_y - self.gt_pose[1]
             sim_range_estimate = np.linalg.norm([dx, dy])
-            sim_bearing = np.arctan2(dy, dx) - self.gt_pose[2]
-            sim_bearing = wrap_angle(sim_bearing)
+            sim_bearing = wrap_angle(np.arctan2(dy, dx) - self.gt_pose[2])
 
-            # Get pose from detection (translation vector in camera frame)
-            # pose_t is a 3x1 matrix: [x, y, z] where z is forward, x is right, y is down
             t = detection.pose_t
-
-            # Extract range and bearing from the pose
-            # Range is the distance to the tag
             range_estimate = np.linalg.norm(t)
-
-            # Bearing is the angle in the horizontal plane (around y-axis)
-            # arctan2(x, z) gives the angle from camera's forward direction
-            bearing = -np.arctan2(t[0, 0], t[2, 0])
-            bearing=wrap_angle(bearing)
+            bearing = wrap_angle(-np.arctan2(t[0, 0], t[2, 0]))
 
             if self.sim:
                 range_estimate = sim_range_estimate
                 bearing = sim_bearing
 
-            # Update the EKF with this measurement
             self.ekf.update([range_estimate, bearing], [tag_x, tag_y])
+
         ids = [det.tag_id for det in detections]
-        #print("ids:",ids)
         self.publish_landmarks(ids)
         self.publish_detections(rect_image_gray, detections, self.latest_img.header)
 
+        self.ekf.finalize_step()
+
+        x, y, theta = self.ekf.q
+        self.log_file.write(f"{x:.4f},{y:.4f},{theta:.4f}\n")
+        self.log_file.flush()
+
+        self.ekf_trajectory.append([x, y, theta])
+        if self.gt_pose is not None:
+            self.gt_trajectory.append(list(self.gt_pose))
+
+        if tag_seen_and_matched:
+            self.publish_corrected_trajectory_and_map()
+
+        return tag_seen_and_matched
+    
     def publish_pose(self, header=None):
 
         pose_cov= PoseWithCovariance()
@@ -622,11 +734,86 @@ class EKFLocalizationNode(DTROS):
         # ---
         self.pub_detections.publish(img_msg)
 
+    def save_smoothed_trajectory(self, smooth_traj):
+        np.savetxt(
+            self.corrected_log_file_path,
+            smooth_traj,
+            fmt="%.6f",
+            delimiter=",",
+        )
+
+
+    def publish_clustered_graph_comparison(self, smooth_traj):
+        if len(self.ekf_trajectory) < 2 or smooth_traj.shape[0] < 2:
+            return
+
+        try:
+            kf_ekf = self._trajectory_to_keyframes(self.ekf_trajectory)
+            mean_nodes_ekf = cluster_nodes(kf_ekf)
+            edges_ekf = build_directed_edges(mean_nodes_ekf)
+            fig_ekf, _ = visualize_clustered_graph(
+                mean_nodes_ekf, edges_ekf, show=False,
+                title="EKF (forward) clustered graph")
+
+            kf_smooth = self._trajectory_to_keyframes(smooth_traj)
+            mean_nodes_smooth = cluster_nodes(kf_smooth)
+            edges_smooth = build_directed_edges(mean_nodes_smooth)
+            fig_smooth, _ = visualize_clustered_graph(
+                mean_nodes_smooth, edges_smooth, show=False,
+                title="RTS-smoothed clustered graph")
+        except Exception as e:
+            rospy.logwarn(f"Clustered graph comparison skipped: {e}")
+            return
+
+        img_ekf = self._fig_to_bgr_array(fig_ekf)
+        plt.close(fig_ekf)
+        img_smooth = self._fig_to_bgr_array(fig_smooth)
+        plt.close(fig_smooth)
+
+        # Figures can render at slightly different pixel heights even at the
+        # same figsize/dpi (legend wrapping, aspect-equal padding, etc.) —
+        # normalize to the shorter one before hconcat, which requires equal heights.
+        h = min(img_ekf.shape[0], img_smooth.shape[0])
+
+        def resize_to_height(img, target_h):
+            scale = target_h / img.shape[0]
+            w = int(round(img.shape[1] * scale))
+            return cv2.resize(img, (w, target_h))
+
+        img_ekf_r = resize_to_height(img_ekf, h)
+        img_smooth_r = resize_to_height(img_smooth, h)
+        combined = cv2.hconcat([img_ekf_r, img_smooth_r])
+
+        self.pub_clustered_graph_compare.publish(
+        self._bgr_array_to_compressed_imgmsg(combined))
+
+    @staticmethod
+    def _fig_to_bgr_array(fig):
+        fig.canvas.draw()
+        buf = np.asarray(fig.canvas.buffer_rgba())
+        return cv2.cvtColor(buf, cv2.COLOR_RGBA2BGR)
+
+    @staticmethod
+    def _bgr_array_to_compressed_imgmsg(img_bgr):
+        msg = CompressedImage()
+        msg.header = Header(stamp=rospy.Time.now())
+        msg.format = "jpeg"
+        msg.data = np.array(cv2.imencode('.jpg', img_bgr)[1]).tobytes()
+        return msg
+
+    def _fig_to_compressed_imgmsg(self, fig):
+        return self._bgr_array_to_compressed_imgmsg(self._fig_to_bgr_array(fig))
+
+    @staticmethod
+    def _trajectory_to_keyframes(traj):
+        """[x,y,theta] rows -> [id, x, y, theta] rows, matching read_nodes()'s format."""
+        arr = np.array(traj, dtype=float)
+        ids = np.arange(1, len(arr) + 1).reshape(-1, 1)
+        return np.hstack([ids, arr])
+
 
 if __name__ == "__main__":
     # Initialize the node
     encoder_localization_node = EKFLocalizationNode(node_name="ekf_localization_node")
     # Keep it spinning
     rospy.spin()
-
-
