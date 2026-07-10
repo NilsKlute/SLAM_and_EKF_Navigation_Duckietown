@@ -4,6 +4,7 @@ from multiprocessing import Lock
 
 
 def wrap_angle(a):
+    """Wrap angle to [-pi, pi]."""
     return (a + np.pi) % (2 * np.pi) - np.pi
 
 
@@ -11,7 +12,10 @@ class EKF:
     def __init__(self, q_0: np.ndarray, P_0: np.ndarray, Q: np.ndarray, R: np.ndarray):
         self.q = q_0
         self.P = P_0
-        self.Q = Q
+        if Q.shape == (3, 3):
+            self.Q = np.array([[Q[0, 0], 0.0], [0.0, Q[2, 2]]])
+        else:
+            self.Q = Q
         self.R = R
         self.q_mutex = Lock()
         self.history = []  # one entry per predict() call, for RTS smoothing
@@ -19,22 +23,22 @@ class EKF:
     def predict(self, dX, dT):
         with self.q_mutex:
             theta = self.q[2]
-            phi = theta + 0.5 * dT
+            q_prior = self.q.copy()
 
-            self.q[0] = self.q[0] + dX * np.cos(phi)
-            self.q[1] = self.q[1] + dX * np.sin(phi)
-            self.q[2] = wrap_angle(self.q[2] + dT)
+            self.q[0] = self.q[0] + dX * np.cos(theta)
+            self.q[1] = self.q[1] + dX * np.sin(theta)
+            self.q[2] = self.q[2] + dT
+            self.q[2] = wrap_angle(self.q[2])
 
             F = np.array([
-                [1.0, 0.0, -dX * np.sin(phi)],
-                [0.0, 1.0,  dX * np.cos(phi)],
-                [0.0, 0.0,  1.0],
+                [1.0, 0.0, -dX * np.sin(theta)],
+                [0.0, 1.0,  dX * np.cos(theta)],
+                [0.0, 0.0,  1.0               ],
             ])
-
             W = np.array([
-                [np.cos(phi), -0.5 * dX * np.sin(phi)],
-                [np.sin(phi),  0.5 * dX * np.cos(phi)],
-                [0.0,          1.0],
+                [np.cos(theta), 0.0],
+                [np.sin(theta), 0.0],
+                [0.0,           1.0],
             ])
 
             self.P = F @ self.P @ F.T + W @ self.Q @ W.T

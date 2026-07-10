@@ -283,7 +283,7 @@ class EKFLocalizationNode(DTROS):
         return msg
 
     def _build_trajectory_comparison_figure(self, smooth_traj):
-        print("_build_trajectory_comparison_figure")
+        #print("_build_trajectory_comparison_figure")
         fig, ax = plt.subplots(figsize=(8, 8))
         if len(self.gt_trajectory) > 0:
             gt = np.array(self.gt_trajectory)
@@ -303,7 +303,7 @@ class EKFLocalizationNode(DTROS):
         return fig
 
     def publish_corrected_trajectory_and_map(self):
-        print("publish_corrected_trajectory_and_map")
+        #print("publish_corrected_trajectory_and_map")
         smooth_traj = self.ekf.rts_smooth()
 
         if len(smooth_traj) < 2:
@@ -344,7 +344,7 @@ class EKFLocalizationNode(DTROS):
         self.pub_street_graph_plot.publish(
             self._fig_to_compressed_imgmsg(fig)
         )
-        print("plot_street_graph")
+        #print("plot_street_graph")
         plt.close(fig)
         #self.publish_clustered_graph_comparison(smooth_traj)
 

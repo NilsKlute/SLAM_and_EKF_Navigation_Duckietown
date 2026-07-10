@@ -29,6 +29,14 @@ class GraphPlannerNode(DTROS):
         self.decision_published = False
         self.init_plan = False
 
+        # Intersection-decision debugging
+        self.planner_debug = False      # toggled from the GUI
+        self._pending_cmd  = None       # computed Int64 decision awaiting manual GO
+        self._dbg_current_id = None
+        self._dbg_next_id    = None
+        self._dbg_diff_deg   = None
+        self._dbg_decision   = None
+
         # --------------------- Params ------------------------------
         self.localization_type  = rospy.get_param("~localization_type", "EKF")
         self.use_cached         = rospy.get_param("~use_cached", False)
@@ -113,6 +121,8 @@ class GraphPlannerNode(DTROS):
 
         self.sub_stop_line = rospy.Subscriber("~at_stop_line", BoolStamped, self.cb_directional_cmd)
         self.sub_int_go    = rospy.Subscriber("~intersection_go", BoolStamped, self.cb_reset_decided_planning)
+        self.sub_debug_mode = rospy.Subscriber("~debug_mode", BoolStamped, self.cb_debug_mode)
+        self.sub_debug_go   = rospy.Subscriber("~debug_go", BoolStamped, self.cb_debug_go)
 
 
          # --------------------- Publishers ------------------------
@@ -290,6 +300,42 @@ class GraphPlannerNode(DTROS):
             ax.quiver(rx, ry, np.cos(rtheta), np.sin(rtheta),
                       color='red', scale=20, width=0.007, zorder=11)
 
+            # --- Intersection-decision debug overlay ---
+            if self.planner_debug and self._dbg_next_id is not None \
+                    and self._dbg_current_id in self.nodes_dict \
+                    and self._dbg_next_id in self.nodes_dict:
+                cur = self.nodes_dict[self._dbg_current_id]
+                nxt = self.nodes_dict[self._dbg_next_id]
+                cx, cy, ctheta = cur[1], cur[2], cur[3]
+                thresh = np.radians(self.turn_angle_thresh_deg)
+                L = 0.35
+
+                # Lookahead node — orange diamond
+                ax.scatter(nxt[1], nxt[2], c='orange', s=320, marker='D', zorder=12,
+                           edgecolors='darkorange', linewidths=2)
+                # Decision vector current -> lookahead (magenta)
+                ax.annotate("", xy=(nxt[1], nxt[2]), xytext=(cx, cy),
+                            arrowprops=dict(arrowstyle="->", color="magenta",
+                                            lw=3, alpha=0.95))
+                # Heading ray (solid) + ±threshold decision cone (dashed)
+                ax.plot([cx, cx + L*np.cos(ctheta)], [cy, cy + L*np.sin(ctheta)],
+                        color='cyan', lw=2, zorder=11)
+                for sign in (+1, -1):
+                    a = ctheta + sign*thresh
+                    ax.plot([cx, cx + L*np.cos(a)], [cy, cy + L*np.sin(a)],
+                            color='purple', lw=1.5, ls='--', alpha=0.8, zorder=11)
+                ax.annotate(f"{self._dbg_diff_deg:+.0f}°", (cx, cy),
+                            fontsize=11, fontweight='bold', color='purple',
+                            xytext=(6, 6), textcoords='offset points', zorder=13)
+
+                pending = "YES" if self._pending_cmd is not None else "no"
+                ax.text(0.02, 0.90,
+                        f"DEBUG ON | thresh ±{self.turn_angle_thresh_deg:.0f}°\n"
+                        f"angle {self._dbg_diff_deg:+.0f}° → {self._dbg_decision}\n"
+                        f"pending GO: {pending}",
+                        transform=ax.transAxes, fontsize=11, va='top', color='purple',
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.85))
+
             # Target label in top-left corner
             ax.text(0.02, 0.98, f"Target: {self._target_label()}",
                     transform=ax.transAxes, fontsize=12, va='top',
@@ -320,6 +366,7 @@ class GraphPlannerNode(DTROS):
             except AttributeError:
                 pass
             self.pub_debug_image.publish(msg)
+            rospy.loginfo_throttle(5.0, f"Debug image published")
 
         except Exception as e:
             rospy.logwarn_throttle(10.0, f"Debug image render failed: {e}")
@@ -387,7 +434,13 @@ class GraphPlannerNode(DTROS):
         if self.decision_published:
             rospy.loginfo_throttle(5, f"We dont need to plan. Decision already published")
             return
-        
+
+        # Debug mode: a decision is already computed and waiting for manual GO.
+        # at_stop_line fires repeatedly, so bail out silently to avoid recomputing
+        # and re-rendering the debug image on every message.
+        if self.planner_debug and self._pending_cmd is not None:
+            return
+
         if self.plan is None:
             rospy.loginfo_throttle(5, f"[graph_planner_node] cb_directional_cmd: We cannot decide on turn! self.plan is: {self.plan}. ")
             return
@@ -400,11 +453,6 @@ class GraphPlannerNode(DTROS):
             rospy.loginfo_throttle(5, f"cb_directional_cmd: We cannot decide on turn! Our current node is not in our plan.")
             return
         
-        rospy.loginfo("[graph_planner_node] decision making before sleep")
-        time.sleep(5)
-        rospy.loginfo("[graph_planner_node] decision making after sleep")
-        
-
         cmd_msg = Int64()
         curr_plan_idx = self.plan.index(self.curr_node)
         lookahead_idx = min(curr_plan_idx + self.skip_n_nodes, len(self.plan) - 1)
@@ -419,19 +467,57 @@ class GraphPlannerNode(DTROS):
 
         if diff_deg > self.turn_angle_thresh_deg:
             cmd_msg.data = 0  # LEFT
-            rospy.loginfo("[graph_planner_node] Decision: TURN LEFT")
+            decision = "TURN LEFT"
         elif diff_deg < -self.turn_angle_thresh_deg:
             cmd_msg.data = 2  # RIGHT
-            rospy.loginfo("[graph_planner_node] Decision: TURN RIGHT")
+            decision = "TURN RIGHT"
         else:
             cmd_msg.data = 1  # STRAIGHT
-            rospy.loginfo("[graph_planner_node] Decision: GO STRAIGHT")
+            decision = "GO STRAIGHT"
+        rospy.loginfo(f"[graph_planner_node] Decision: {decision} (angle {diff_deg:+.0f}°, thresh ±{self.turn_angle_thresh_deg:.0f}°)")
 
+        # Store for the debug-image overlay
+        self._dbg_current_id = current_id
+        self._dbg_next_id    = next_id
+        self._dbg_diff_deg   = diff_deg
+        self._dbg_decision   = decision
+        self._pending_cmd    = cmd_msg
+
+        if self.planner_debug:
+            # Pause: hold the decision, wait for a manual GO from the GUI.
+            rospy.loginfo("[graph_planner_node] DEBUG: decision pending — press Intersection GO")
+            self._publish_debug_image(*self._latest_pose)
+            return
+
+        rospy.loginfo("[graph_planner_node] decision making before sleep")
+        time.sleep(5)
+        rospy.loginfo("[graph_planner_node] decision making after sleep")
         rospy.Timer(rospy.Duration(0.2), lambda event: self.pub_directional_cmd.publish(cmd_msg), oneshot=True)
         self.decision_published = True
 
     def cb_reset_decided_planning(self, _msg):
         self.decision_published = False
+
+    def cb_debug_mode(self, msg):
+        self.planner_debug = msg.data
+        rospy.loginfo(f"[graph_planner_node] planner_debug = {self.planner_debug}")
+        if not self.planner_debug:
+            self._pending_cmd = None
+
+    def cb_debug_go(self, _msg):
+        if not self.planner_debug:
+            return
+        if self._pending_cmd is None:
+            rospy.loginfo("[graph_planner_node] DEBUG GO: no decision pending")
+            return
+        self.pub_directional_cmd.publish(self._pending_cmd)
+        rospy.loginfo(f"[graph_planner_node] DEBUG GO: published decision {self._pending_cmd.data}")
+        self.decision_published = True
+        self._pending_cmd = None
+        self._dbg_current_id = None
+        self._dbg_next_id    = None
+        self._dbg_diff_deg   = None
+        self._dbg_decision   = None
 
 
 

@@ -55,6 +55,15 @@ class TargetGUINode(object):
             f"/{self.veh}/joy_mapper_node/joystick_override",
             BoolStamped, queue_size=1)
 
+        # Planner intersection-debug toggle + manual GO.
+        self.planner_debug = False
+        self.pub_debug_mode = rospy.Publisher(
+            f"/{self.veh}/graph_planner_node/debug_mode",
+            BoolStamped, queue_size=1, latch=True)
+        self.pub_debug_go = rospy.Publisher(
+            f"/{self.veh}/graph_planner_node/debug_go",
+            BoolStamped, queue_size=1)
+
         # Live "arrived" feedback from the planner (latched topic).
         rospy.Subscriber(
             f"/{self.veh}/graph_planner_node/arrived_at_target",
@@ -127,18 +136,32 @@ class TargetGUINode(object):
     def _build_ui(self):
         self.root = tk.Tk()
         self.root.title(f"Target Selection — {self.veh}")
-        self.root.minsize(340, 225)
+        self.root.minsize(340, 300)
         self.root.configure(bg=self.DUCK_YELLOW)
 
         pad = dict(padx=14, pady=8)
 
         self._build_switch(self.root).grid(
             row=0, column=0, columnspan=2, sticky="w", **pad)
+        self._build_debug_switch(self.root).grid(
+            row=1, column=0, columnspan=2, sticky="w", **pad)
+
+        # Manual intersection GO — only visible while planner debug is on.
+        self.int_go_btn = tk.Button(self.root, text="▶ Intersection GO",
+                                    command=self._send_intersection_go,
+                                    bg=self.DUCK_BLUE, fg=self.WHITE,
+                                    activebackground=self.DUCK_BLUE_ACTIVE,
+                                    activeforeground=self.WHITE,
+                                    font=("DejaVu Sans", 12, "bold"),
+                                    relief="flat", bd=0, padx=10, pady=6,
+                                    cursor="hand2")
+        self.int_go_btn.grid(row=2, column=0, columnspan=2, sticky="ew", **pad)
+        self.int_go_btn.grid_remove()
 
         tk.Label(self.root, text="Target location:",
                  bg=self.DUCK_YELLOW, fg=self.DARK,
                  font=("DejaVu Sans", 12, "bold")).grid(
-                     row=1, column=0, columnspan=2, sticky="w", **pad)
+                     row=3, column=0, columnspan=2, sticky="w", **pad)
 
         self.target_var = tk.StringVar()
         if self.targets:
@@ -175,7 +198,7 @@ class TargetGUINode(object):
                                   values=self.targets, width=22,
                                   style="Duck.TCombobox",
                                   font=("DejaVu Sans", 11))
-        self.combo.grid(row=2, column=0, columnspan=2, sticky="ew", **pad)
+        self.combo.grid(row=4, column=0, columnspan=2, sticky="ew", **pad)
         self.combo.bind("<Return>", lambda _e: self._send())
 
         self.go_btn = tk.Button(self.root, text="GO", command=self._send,
@@ -185,7 +208,7 @@ class TargetGUINode(object):
                                 font=("DejaVu Sans", 13, "bold"),
                                 relief="flat", bd=0, padx=10, pady=8,
                                 cursor="hand2")
-        self.go_btn.grid(row=3, column=0, columnspan=2, sticky="ew", **pad)
+        self.go_btn.grid(row=5, column=0, columnspan=2, sticky="ew", **pad)
 
         initial = (f"Service: {self.srv_name}" if self.targets
                    else "No label map found — type a label or node ID.")
@@ -194,7 +217,7 @@ class TargetGUINode(object):
                                    bg=self.DUCK_YELLOW, fg=self.DARK,
                                    wraplength=310, justify="left",
                                    font=("DejaVu Sans", 9))
-        self.status_lbl.grid(row=4, column=0, columnspan=2, sticky="w", **pad)
+        self.status_lbl.grid(row=6, column=0, columnspan=2, sticky="w", **pad)
 
         self.root.columnconfigure(0, weight=1)
         self.root.columnconfigure(1, weight=1)
@@ -203,41 +226,54 @@ class TargetGUINode(object):
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(200, self._check_ros)
 
-    # ---- joystick-override toggle switch ----
+    # ---- toggle switches ----
+
+    def _draw_pill(self, canvas, on):
+        """Draw a rounded pill toggle on `canvas`, knob right (blue) when on."""
+        canvas.delete("all")
+        w, h = self._sw_w, self._sw_h
+        r = h // 2
+        track = self.DUCK_BLUE if on else "#B8B8B8"
+        canvas.create_oval(2, 2, h - 2, h - 2, fill=track, outline=track)
+        canvas.create_oval(w - h + 2, 2, w - 2, h - 2, fill=track, outline=track)
+        canvas.create_rectangle(r + 1, 2, w - r - 1, h - 2, fill=track, outline=track)
+        knob_r = r - 4
+        cx = (w - r) if on else r
+        canvas.create_oval(cx - knob_r, r - knob_r, cx + knob_r, r + knob_r,
+                           fill=self.WHITE, outline=self.WHITE)
 
     def _build_switch(self, parent):
+        self._sw_w, self._sw_h = 60, 28
         frame = tk.Frame(parent, bg=self.DUCK_YELLOW)
         tk.Label(frame, text="Mode:", bg=self.DUCK_YELLOW, fg=self.DARK,
                  font=("DejaVu Sans", 12, "bold")).pack(side="left")
-        self._sw_w, self._sw_h = 60, 28
-        self.switch_canvas = tk.Canvas(frame, width=self._sw_w,
-                                       height=self._sw_h, bg=self.DUCK_YELLOW,
-                                       highlightthickness=0, cursor="hand2")
-        self.switch_canvas.pack(side="left", padx=(8, 8))
-        self.switch_canvas.bind("<Button-1>", lambda _e: self._toggle_switch())
-        self.switch_text = tk.Label(frame, text="Joystick",
-                                    bg=self.DUCK_YELLOW, fg=self.DARK,
-                                    font=("DejaVu Sans", 10))
-        self.switch_text.pack(side="left")
-        self._draw_switch()
+        self.mode_canvas = tk.Canvas(frame, width=self._sw_w,
+                                     height=self._sw_h, bg=self.DUCK_YELLOW,
+                                     highlightthickness=0, cursor="hand2")
+        self.mode_canvas.pack(side="left", padx=(8, 8))
+        self.mode_canvas.bind("<Button-1>", lambda _e: self._toggle_switch())
+        self.mode_text = tk.Label(frame, text="Joystick",
+                                  bg=self.DUCK_YELLOW, fg=self.DARK,
+                                  font=("DejaVu Sans", 10))
+        self.mode_text.pack(side="left")
+        self._draw_pill(self.mode_canvas, self.autonomous)
         return frame
 
-    def _draw_switch(self):
-        c = self.switch_canvas
-        c.delete("all")
-        w, h = self._sw_w, self._sw_h
-        r = h // 2
-        on = self.autonomous
-        track = self.DUCK_BLUE if on else "#B8B8B8"
-        # Rounded "pill" track: two end circles joined by a rectangle.
-        c.create_oval(2, 2, h - 2, h - 2, fill=track, outline=track)
-        c.create_oval(w - h + 2, 2, w - 2, h - 2, fill=track, outline=track)
-        c.create_rectangle(r + 1, 2, w - r - 1, h - 2, fill=track, outline=track)
-        # White knob, slid right when ON (autonomous), left when OFF (joystick).
-        knob_r = r - 4
-        cx = (w - r) if on else r
-        c.create_oval(cx - knob_r, r - knob_r, cx + knob_r, r + knob_r,
-                      fill=self.WHITE, outline=self.WHITE)
+    def _build_debug_switch(self, parent):
+        frame = tk.Frame(parent, bg=self.DUCK_YELLOW)
+        tk.Label(frame, text="Debug:", bg=self.DUCK_YELLOW, fg=self.DARK,
+                 font=("DejaVu Sans", 12, "bold")).pack(side="left")
+        self.debug_canvas = tk.Canvas(frame, width=self._sw_w,
+                                      height=self._sw_h, bg=self.DUCK_YELLOW,
+                                      highlightthickness=0, cursor="hand2")
+        self.debug_canvas.pack(side="left", padx=(8, 8))
+        self.debug_canvas.bind("<Button-1>", lambda _e: self._toggle_debug())
+        self.debug_text = tk.Label(frame, text="off",
+                                   bg=self.DUCK_YELLOW, fg=self.DARK,
+                                   font=("DejaVu Sans", 10))
+        self.debug_text.pack(side="left")
+        self._draw_pill(self.debug_canvas, self.planner_debug)
+        return frame
 
     def _toggle_switch(self):
         # A click is a REQUEST; the switch position follows the actual FSM
@@ -253,8 +289,32 @@ class TargetGUINode(object):
                          if go_autonomous
                          else "Requested joystick control.", "blue")
 
+    def _toggle_debug(self):
+        # Locally driven (this GUI owns the planner-debug state).
+        self.planner_debug = not self.planner_debug
+        msg = BoolStamped()
+        msg.header.stamp = rospy.Time.now()
+        msg.data = self.planner_debug
+        self.pub_debug_mode.publish(msg)
+        self._draw_pill(self.debug_canvas, self.planner_debug)
+        self.debug_text.config(text="on" if self.planner_debug else "off")
+        if self.planner_debug:
+            self.int_go_btn.grid()
+        else:
+            self.int_go_btn.grid_remove()
+        self._set_status(
+            "Planner debug ON — intersection decisions wait for GO."
+            if self.planner_debug else "Planner debug OFF.", "blue")
+
+    def _send_intersection_go(self):
+        msg = BoolStamped()
+        msg.header.stamp = rospy.Time.now()
+        msg.data = True
+        self.pub_debug_go.publish(msg)
+        self._set_status("Intersection decision sent.", "green")
+
     def _cb_fsm_state(self, msg):
-        # Drive the switch from the real FSM state. Anything that isn't the
+        # Drive the Mode switch from the real FSM state. Anything that isn't the
         # global joystick-override state counts as "autonomous / on".
         autonomous = (msg.state != "NORMAL_JOYSTICK_CONTROL")
         state = msg.state
@@ -262,8 +322,8 @@ class TargetGUINode(object):
 
     def _apply_switch_state(self, autonomous, state):
         self.autonomous = autonomous
-        self._draw_switch()
-        self.switch_text.config(text=state if autonomous else "Joystick")
+        self._draw_pill(self.mode_canvas, autonomous)
+        self.mode_text.config(text=state if autonomous else "Joystick")
 
     def _set_status(self, text, color="black"):
         # Marshal onto the tkinter main loop — called from ROS threads.
