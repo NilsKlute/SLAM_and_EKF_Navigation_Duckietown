@@ -129,3 +129,16 @@ ENV DUCKIETOWN_DATA="/tmp/duckietown-data"
 RUN echo 'config echo 1' > .compmake.rc
 
 COPY assets/bin/send-fsm-state.sh /usr/local/bin
+
+# Silence the DTROS "Node switched from [on] to [off]" INFO log that every
+# fsm_controlled node emits on each FSM transition (pure spam during
+# navigation). Demote it to debug in the installed library. We locate the file
+# with grep (no python import — importing duckietown.dtros needs the ROS runtime
+# and fails during build). If the string isn't found, we skip without failing.
+RUN F="$(grep -rl --include='*.py' 'Node switched from' /code /opt /usr/lib/python3* /usr/local/lib/python3* 2>/dev/null | head -n1)"; \
+    if [ -n "$F" ]; then \
+        sed -i 's/self\.log(msg)/self.logdebug(msg)/' "$F"; \
+        echo "[dtros-patch] patched $F:"; grep -n "self.logdebug(msg)" "$F"; \
+    else \
+        echo "[dtros-patch] 'Node switched from' not found — nothing to patch"; \
+    fi

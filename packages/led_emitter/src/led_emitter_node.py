@@ -323,8 +323,10 @@ class LEDEmitterNode(DTROS):
             # Anyway modify the frequency (to stop timer if static)
             self.changeFrequency()
 
-            # Loginfo
-            self.log("Pattern changed to (%r), cycle: %s " % (pattern_name, self.frequency))
+            # Logdebug (suppressed at default INFO level to avoid spam on every
+            # FSM transition; raise the log level to see it again).
+            self.log("Pattern changed to (%r), cycle: %s " % (pattern_name, self.frequency),
+                     type="debug")
 
     def changeFrequency(self):
         """Changes current frequency of LEDs

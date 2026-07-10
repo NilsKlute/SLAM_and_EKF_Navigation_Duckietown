@@ -34,6 +34,9 @@ class LaneController:
         self.phi_I = 0.0
         self.prev_d_err = 0.0
         self.prev_phi_err = 0.0
+        # Low-pass-filtered error derivatives for the D term.
+        self.d_D_filt = 0.0
+        self.phi_D_filt = 0.0
 
     def update_parameters(self, parameters):
         """Updates parameters of LaneController object.
@@ -76,12 +79,18 @@ class LaneController:
 
         self.reset_if_needed(d_err, phi_err, wheels_cmd_exec)
 
+        # Filtered derivative of the errors for the D term (computed before
+        # prev_*_err is overwritten below).
+        d_D, phi_D = self.compute_derivatives(d_err, phi_err, dt)
+
         # Scale the parameters linear such that their real value is at 0.22m/s
         omega = (
             self.parameters["~k_d"].value * d_err
             + self.parameters["~k_theta"].value * phi_err
             + self.parameters["~k_Id"].value * self.d_I
             + self.parameters["~k_Iphi"].value * self.phi_I
+            + self.parameters["~k_Dd"].value * d_D
+            + self.parameters["~k_Dphi"].value * phi_D
         )
 
         self.prev_d_err = d_err
@@ -126,6 +135,34 @@ class LaneController:
         self.d_I += d_err * dt
         self.phi_I += phi_err * dt
 
+    def compute_derivatives(self, d_err, phi_err, dt):
+        """Low-pass-filtered derivative of the error signals for the D term.
+
+        Returns the filtered rate of change of the lateral and heading errors.
+        A first-order (EMA) filter tames the noise amplification inherent to
+        differentiating the noisy lane-pose estimate; ``~derivative_smoothing``
+        in [0, 1) sets how heavy the filtering is (0 = raw derivative, closer to
+        1 = smoother but more lag). On the first sample (dt is None) or a
+        non-positive dt, the previous filtered value is returned so the D term
+        contributes nothing spurious.
+
+        Args:
+            d_err (:obj:`float`): current lateral error
+            phi_err (:obj:`float`): current heading error
+            dt (:obj:`float`): time since last command update
+
+        Returns:
+            (d_D, phi_D): filtered error derivatives
+        """
+        if dt is None or dt <= 0.0:
+            return self.d_D_filt, self.phi_D_filt
+        d_deriv = (d_err - self.prev_d_err) / dt
+        phi_deriv = (phi_err - self.prev_phi_err) / dt
+        alpha = self.parameters["~derivative_smoothing"]
+        self.d_D_filt = alpha * self.d_D_filt + (1.0 - alpha) * d_deriv
+        self.phi_D_filt = alpha * self.phi_D_filt + (1.0 - alpha) * phi_deriv
+        return self.d_D_filt, self.phi_D_filt
+
     def reset_if_needed(self, d_err, phi_err, wheels_cmd_exec):
         """Resets the integral error if needed.
 
@@ -145,6 +182,8 @@ class LaneController:
         if wheels_cmd_exec[0] == 0 and wheels_cmd_exec[1] == 0:
             self.d_I = 0
             self.phi_I = 0
+            self.d_D_filt = 0.0
+            self.phi_D_filt = 0.0
 
     @staticmethod
     def adjust_integral(error, integral, bounds, resolution):

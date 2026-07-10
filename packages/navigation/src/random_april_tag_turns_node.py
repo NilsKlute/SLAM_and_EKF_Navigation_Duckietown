@@ -32,11 +32,10 @@ class RandomAprilTagTurnsNode(DTROS):
         self.turn_type = turn_type_msg.data
 
     def decide_cb(self, avail_turns_msg):
-        
-        time.sleep(1)
+
 
         if self.turn_type == -1:
-            rospy.loginfo(f"[{self.node_name}] We havn't received the planners decision yet")
+            rospy.loginfo_throttle(5, f"[{self.node_name}] We havn't received the planners decision yet")
             return
         
         avail_turns = avail_turns_msg.data
@@ -55,6 +54,7 @@ class RandomAprilTagTurnsNode(DTROS):
 
         self.pub_turn_type.publish(turn_decision_msg)
         rospy.loginfo(f"[{self.node_name}] We decided on turn ID {turn_decision_msg.data}")
+        self.turn_type = -1
 
 
     def setupParameter(self, param_name, default_value):

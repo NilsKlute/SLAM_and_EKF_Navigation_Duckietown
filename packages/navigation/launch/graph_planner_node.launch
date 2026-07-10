@@ -10,6 +10,10 @@
     <group ns="$(arg veh)">
         <node name="$(arg node_name)" pkg="$(arg pkg_name)" type="$(arg node_name).py" output="screen" required="true">
             <rosparam command="load" file="$(find navigation)/config/$(arg node_name)/$(arg param_file_name).yaml"/>
+            <rosparam if="$(eval arg('localization_type') == 'EKF')" command="load"
+                      file="$(find navigation)/config/$(arg node_name)/graph_ekf.yaml"/>
+            <rosparam unless="$(eval arg('localization_type') == 'EKF')" command="load"
+                      file="$(find navigation)/config/$(arg node_name)/graph_slam.yaml"/>
             <param name="veh"              value="$(arg veh)"/>
             <param name="localization_type" value="$(arg localization_type)"/>
             <param name="graph_file_ekf"   value="$(find navigation)/config/graph_planner_node/ekf_loop.txt"/>

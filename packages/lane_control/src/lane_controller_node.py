@@ -69,6 +69,18 @@ class LaneControllerNode(DTROS):
         self.params["~k_Iphi"] = DTParam(
             "~k_Iphi", param_type=ParamType.FLOAT, min_value=-100.0, max_value=100.0
         )
+        # Derivative (D) gains — make this a full PID. Default 0 so behavior is
+        # unchanged until tuned. Seed a default first so older config files that
+        # don't define these keys still start (DTParam requires the param to
+        # exist on the server).
+        for _name, _default in (("~k_Dd", 0.0), ("~k_Dphi", 0.0), ("~derivative_smoothing", 0.7)):
+            if not rospy.has_param(_name):
+                rospy.set_param(_name, _default)
+        self.params["~k_Dd"] = DTParam("~k_Dd", param_type=ParamType.FLOAT, min_value=-100.0, max_value=100.0)
+        self.params["~k_Dphi"] = DTParam(
+            "~k_Dphi", param_type=ParamType.FLOAT, min_value=-100.0, max_value=100.0
+        )
+        self.params["~derivative_smoothing"] = rospy.get_param("~derivative_smoothing", 0.7)
         #self.params["~theta_thres"] = rospy.get_param("~theta_thres", None)
         #Breaking up the self.params["~theta_thres"] parameter for more finer tuning of phi
         self.params["~theta_thres_min"] = DTParam("~theta_thres_min", param_type=ParamType.FLOAT, min_value=-100.0, max_value=100.0)  #SUGGESTION mandatorizing the use of DTParam inplace of rospy.get_param for parameters in the entire dt-core repository as it allows active tuning while Robot is in action.

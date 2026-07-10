@@ -37,7 +37,7 @@ class LEDPatternSwitchNode:
                 f"switch."
             )
         else:
-            rospy.loginfo(
+            rospy.logdebug(
                 f"[{self.node_name}] Led pattern switched to {self.current_src_name} in state "
                 f"{fsm_state_msg.state}."
             )

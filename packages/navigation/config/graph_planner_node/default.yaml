@@ -1,24 +1,13 @@
-# Graph loading
+# Universal graph_planner params — graph-INDEPENDENT (scale- and density-invariant).
+# Loaded for every localization type. Graph-specific params live in
+# graph_ekf.yaml / graph_slam.yaml, loaded on top of this by the launch file.
+
+# Graph loading (cache file is already per-type: clustered_nodes_<type>.txt)
 use_cached: false
 data_dir: "/data/graph_planner"
 
-# Clustering (use_clustering: false → raw keyframes become graph nodes directly)
-use_clustering: true
-spatial_radius: 0.2
-angle_threshold_deg: 45.0
-
-# Edge building
-edge_max_dist: 0.5
-edge_max_heading_diff_deg: 130.0
-
-# Localization / candidate matching
-candidate_max_dist: 1.2
-candidate_k: 3
-arrival_threshold: 0.3
-
-# Directional command
-skip_n_nodes: 2
+# Directional command — pure decision geometry, independent of the graph
 turn_angle_threshold_deg: 35.0
 
-# A* planner
+# A* planner — pure decision geometry, independent of the graph
 u_turn_thresh_deg: 120.0

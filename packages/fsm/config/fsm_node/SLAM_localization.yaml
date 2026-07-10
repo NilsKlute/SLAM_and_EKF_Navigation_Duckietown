@@ -1,6 +1,6 @@
 # Initial state of the FSM
 
-initial_state: "NORMAL_JOYSTICK_CONTROL"
+initial_state: "IDLE"
 
 events: # Maps from subscribing topic to signal ids
   joystick_override_on:
@@ -72,7 +72,7 @@ states:
       - stop_line_filter_node
       - ground_projection_node
       - anti_instagram
-      - intersection_type_detector_node
+      #- intersection_type_detector_node this is useful for debugging not not needed now
       - deadreckoning_node
     lights: "GREEN"
 

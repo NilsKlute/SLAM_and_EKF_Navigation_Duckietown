@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
 import cv2
+import os
 import rospy
+import tempfile
 import numpy as np
 import tf
+from contextlib import contextmanager
 from multiprocessing import Lock
 from typing import Optional
 
@@ -27,6 +30,34 @@ from navigation.BEV_SLAM import *
 def wrap_angle(a):
     """Wrap angle to [-pi, pi]."""
     return (a + np.pi) % (2*np.pi) - np.pi
+
+
+@contextmanager
+def capture_c_stdio():
+    """Capture C-level stdout/stderr (fd 1 & 2) for the duration of the block.
+
+    The dt_apriltags C library prints messages such as
+    'Error, more than one new minimum found.' via printf directly to the OS
+    file descriptors, which Python-level logging / rospy throttling cannot
+    intercept. This redirects fd 1 and 2 into a temp buffer (so the raw spam
+    never reaches the console) and, after the block, stores what was printed in
+    the yielded one-element list so the caller can inspect it.
+    """
+    tmp = tempfile.TemporaryFile(mode="w+b")
+    saved_out, saved_err = os.dup(1), os.dup(2)
+    captured = [""]
+    try:
+        os.dup2(tmp.fileno(), 1)
+        os.dup2(tmp.fileno(), 2)
+        yield captured
+    finally:
+        os.dup2(saved_out, 1)
+        os.dup2(saved_err, 2)
+        os.close(saved_out)
+        os.close(saved_err)
+        tmp.seek(0)
+        captured[0] = tmp.read().decode("utf-8", "replace")
+        tmp.close()
 
 
 class EKFLocalizationNode(DTROS):
@@ -68,6 +99,11 @@ class EKFLocalizationNode(DTROS):
         self.rectifier = None
         self.rect_camera_K = None
         self.jpeg = TurboJPEG()
+        self.mapx = None
+        self.mapy = None
+        self.homography = None
+        self.projector = None
+        self.bev_slam = None
 
         q_0 = np.array([
             rospy.get_param("~x_0", 0.0),
@@ -83,9 +119,8 @@ class EKFLocalizationNode(DTROS):
 
 
         Q = np.array([
-            [ rospy.get_param("~Q_xx", 0.0), 0.0, 0.0],
-            [ 0.0, rospy.get_param("~Q_yy", 0.0), 0.0],
-            [ 0.0, 0.0, rospy.get_param("~Q_tt", 0.0)],
+            [ rospy.get_param("~Q_dX", 0.0), 0.0 ],
+            [ 0.0, rospy.get_param("~Q_dT", 0.0) ],
         ])
 
         R = np.array([
@@ -167,15 +202,6 @@ class EKFLocalizationNode(DTROS):
             latch=True
         )
 
-        #BEV_SLAM
-        self.camera_model = None
-        self.mapx = None
-        self.mapy = None
-        self.jpeg = TurboJPEG()
-        self.homography = None
-        self.camera_model = None
-        self.projector = None
-        self.bev_slam = None
         # Get the steering gain (omega_max) from the calibration file
         # It defines the maximum omega used to scale normalized steering command
         kinematics_calib = self.read_params_from_calibration_file()
@@ -191,8 +217,6 @@ class EKFLocalizationNode(DTROS):
         # when the encoder data arrives
         rospy.Timer(rospy.Duration(1.0/10.0), self.doPredict)
 
-
-        self.loginfo("Initialized!!!!!!!!!!!!!!!!!!!!!!!!22222222")
 
     #BEV_SLAM
     def read_params_from_calibration_file(self):
@@ -294,16 +318,12 @@ class EKFLocalizationNode(DTROS):
 
 
     def cb_info(self, msg):
-        self.loginfo("Camera info message received. Unsubscribing from camera_info topic.")
-        try:
-            self.sub_camera_info.shutdown()
-        except BaseException:
-            pass
+        rospy.loginfo_throttle(2.0, "Camera info message received.")
         H, W = msg.height, msg.width
 
         d_arr = np.array(msg.D, dtype=float)
         if len(d_arr) != 5:
-            self.logwarn(f"Camera D has {len(d_arr)} coefficients, expected 5 — padding with zeros")
+            self.logwarn_throttle(2.0, f"Camera D has {len(d_arr)} coefficients, expected 5 — padding with zeros")
             d_padded = np.zeros(5)
             d_padded[:min(len(d_arr), 5)] = d_arr[:5]
             d_arr = d_padded
@@ -317,8 +337,15 @@ class EKFLocalizationNode(DTROS):
                 P=np.reshape(msg.P, (3, 4)),
             )
         except Exception as e:
-            self.logerr(f"CameraModel construction failed: {e} — EKF runs without camera model")
+            self.logerr_throttle(2.0, f"CameraModel construction failed: {e} — staying subscribed, will retry")
             return
+
+        # Only stop listening once we have a valid camera model.
+        try:
+            self.sub_camera_info.shutdown()
+        except BaseException:
+            pass
+        self.loginfo("Camera model built from camera_info.")
 
         self.rectifier = Rectifier(self.camera_model)
         self.rect_camera_K, _ = cv2.getOptimalNewCameraMatrix(
@@ -391,7 +418,6 @@ class EKFLocalizationNode(DTROS):
             return
 
         if self.latest_img is None:
-            print("waiting for first image")
             return
         
         # Decompress the image
@@ -416,12 +442,22 @@ class EKFLocalizationNode(DTROS):
         # Detect AprilTags with pose estimation
         #print(f"image shape: {image_gray.shape}, dtype: {image_gray.dtype}, min: {image_gray.min()}, max: {image_gray.max()}")
 
-        detections = self.apriltag_detector.detect(
-            rect_image_gray,
-            estimate_tag_pose=True,
-            camera_params=camera_params,
-            tag_size=tag_size
-        )
+        # The C pose solver prints "Error, more than one new minimum found."
+        # per tag at ~10 Hz. Capture that raw C output (rospy throttling can't
+        # touch a printf) and, only if the ambiguity message actually appeared,
+        # surface a single throttled warning instead.
+        with capture_c_stdio() as c_out:
+            detections = self.apriltag_detector.detect(
+                rect_image_gray,
+                estimate_tag_pose=True,
+                camera_params=camera_params,
+                tag_size=tag_size
+            )
+        if "more than one new minimum" in c_out[0]:
+            rospy.logwarn_throttle(
+                5.0,
+                f"[ekf_localization_node] AprilTag pose solver reported ambiguity"
+            )
         # Schneller Sanity-Check direkt im doUpdate, VOR dem EKF-Zeug:
         #print(f"raw detections: {len(detections)}")
         #   for d in detections:

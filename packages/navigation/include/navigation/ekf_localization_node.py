@@ -83,9 +83,8 @@ class EKFLocalizationNode(DTROS):
 
 
         Q = np.array([
-            [ rospy.get_param("~Q_xx", 0.0), 0.0, 0.0],
-            [ 0.0, rospy.get_param("~Q_yy", 0.0), 0.0],
-            [ 0.0, 0.0, rospy.get_param("~Q_tt", 0.0)],
+            [ rospy.get_param("~Q_dX", 0.0), 0.0 ],
+            [ 0.0, rospy.get_param("~Q_dT", 0.0) ],
         ])
 
         R = np.array([

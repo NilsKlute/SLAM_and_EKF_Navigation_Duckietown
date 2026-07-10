@@ -213,7 +213,7 @@ class GraphPlannerNode(DTROS):
             if self.plan is not None:
                 self.curr_node = candidate
                 path_found = True
-                rospy.loginfo(f"Replanned from Node {self.curr_node}. Path: {self.plan}")
+                rospy.loginfo(f"Replanned from Node {self.curr_node}.")
                 break
 
         if not path_found:
@@ -358,26 +358,52 @@ class GraphPlannerNode(DTROS):
     # --------------------- Navigation callbacks -------------------------------
 
     def cb_init_navigation(self, target_msg):
-        if target_msg.data in self.label_map:
-            self.target = self.label_map[target_msg.data]
-            rospy.loginfo(f"Target set: '{target_msg.data}' → node {self.target}")
+        label = target_msg.data.strip()
+        if label in self.label_map:
+            self.target = self.label_map[label]
+            rospy.loginfo(f"Target set: '{label}' → node {self.target}")
+            return
+        # Not a known label — accept a raw node ID typed straight into the GUI.
+        try:
+            self.target = int(label)
+        except ValueError:
+            rospy.logerr(f"Target '{label}' is neither a known label nor an integer ID. "
+                         f"Known labels: {list(self.label_map.keys())}; "
+                         f"valid node IDs: {sorted(self.nodes_dict.keys())}")
+            return
+        if self.target in self.nodes_dict:
+            rospy.loginfo(f"Target set to raw node ID {self.target}")
         else:
-            rospy.logwarn(f"Label '{target_msg.data}' not in label map {self.label_map}. "
-                          f"Trying as raw integer ID.")
-            try:
-                self.target = int(target_msg.data)
-                rospy.loginfo(f"Target set to raw node ID {self.target}")
-            except ValueError:
-                rospy.logerr(f"Target '{target_msg.data}' is neither a known label nor a valid integer ID.")
-                return
+            rospy.logwarn(f"Node ID {self.target} not in graph. "
+                          f"Valid node IDs: {sorted(self.nodes_dict.keys())}")
         
 
     def cb_directional_cmd(self, _msg):
-        if self.decision_published or self.plan is None or self.curr_node is None or self.curr_node not in self.plan:
-            rospy.loginfo(f"We cannot plan! Decision published: {self.decision_published}.\n self.plan is: {self.plan}. ")
+
+        if self.target == None:
+            rospy.loginfo_throttle(5, f"[graph_planner_node] cb_directional_cmd: target is not set!")
+            return
+
+        if self.decision_published:
+            rospy.loginfo_throttle(5, f"We dont need to plan. Decision already published")
             return
         
+        if self.plan is None:
+            rospy.loginfo_throttle(5, f"[graph_planner_node] cb_directional_cmd: We cannot decide on turn! self.plan is: {self.plan}. ")
+            return
+        
+        if self.curr_node is None:
+            rospy.loginfo_throttle(5, f"[graph_planner_node] cb_directional_cmd: We cannot decide on turn! We dont have a current node we are localized to.")
+            return
+        
+        if self.curr_node not in self.plan:
+            rospy.loginfo_throttle(5, f"cb_directional_cmd: We cannot decide on turn! Our current node is not in our plan.")
+            return
+        
+        rospy.loginfo("[graph_planner_node] decision making before sleep")
         time.sleep(5)
+        rospy.loginfo("[graph_planner_node] decision making after sleep")
+        
 
         cmd_msg = Int64()
         curr_plan_idx = self.plan.index(self.curr_node)
@@ -393,17 +419,16 @@ class GraphPlannerNode(DTROS):
 
         if diff_deg > self.turn_angle_thresh_deg:
             cmd_msg.data = 0  # LEFT
-            rospy.loginfo("TURN LEFT")
+            rospy.loginfo("[graph_planner_node] Decision: TURN LEFT")
         elif diff_deg < -self.turn_angle_thresh_deg:
             cmd_msg.data = 2  # RIGHT
-            rospy.loginfo("TURN RIGHT")
+            rospy.loginfo("[graph_planner_node] Decision: TURN RIGHT")
         else:
             cmd_msg.data = 1  # STRAIGHT
-            rospy.loginfo("GO STRAIGHT")
+            rospy.loginfo("[graph_planner_node] Decision: GO STRAIGHT")
 
         rospy.Timer(rospy.Duration(0.2), lambda event: self.pub_directional_cmd.publish(cmd_msg), oneshot=True)
         self.decision_published = True
-        rospy.loginfo("Planner decided and published directional cmd")
 
     def cb_reset_decided_planning(self, _msg):
         self.decision_published = False

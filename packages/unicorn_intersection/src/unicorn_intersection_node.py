@@ -41,12 +41,24 @@ class UnicornIntersectionNode(DTROS):
         self.stop_line_pose = Pose2D()
         self.fsm_state = None
 
-        self.sub_turn_type = rospy.Subscriber("~turn_type", Int16, self.cbTurnType)
-        self.sub_encoder_left = message_filters.Subscriber("~left_wheel_encoder_driver_node/tick", WheelEncoderStamped)
-        self.sub_encoder_right = message_filters.Subscriber("~right_wheel_encoder_driver_node/tick", WheelEncoderStamped)
-        self.sub_stop_line_reading = rospy.Subscriber("~stop_line_reading", StopLineReading, self.cbStopLineReading)
+
+        # -------------- Subscriber -------------------
         self.sub_fsm_mode = rospy.Subscriber("~mode", FSMState, self.cbsetFSM)
 
+        self.sub_stop_line_reading = rospy.Subscriber("~stop_line_reading", StopLineReading, self.cbStopLineReading)
+        self.sub_turn_type = rospy.Subscriber("~turn_type", Int16, self.cbTurnType)
+
+        self.sub_encoder_left = message_filters.Subscriber("~left_wheel_encoder_driver_node/tick", WheelEncoderStamped)
+        self.sub_encoder_right = message_filters.Subscriber("~right_wheel_encoder_driver_node/tick", WheelEncoderStamped)
+        self.ts_encoders = message_filters.ApproximateTimeSynchronizer(
+            [self.sub_encoder_left, self.sub_encoder_right], 1, 1
+        )
+        self.ts_encoders.registerCallback(self.cb_ts_encoders_hardcoded)
+        
+
+
+
+        # -------------- Publisher -------------------
         self.pub_int_done = rospy.Publisher("~intersection_done", BoolStamped, queue_size=1)
         self.pub_trans_done = rospy.Publisher("~transition_done", BoolStamped, queue_size=1)
         self.car_cmd = rospy.Publisher("~car_cmd", Twist2DStamped, queue_size=1, dt_topic_type=TopicType.CONTROL)
@@ -59,10 +71,6 @@ class UnicornIntersectionNode(DTROS):
 
         self.hc_start_time = None
 
-        self.ts_encoders = message_filters.ApproximateTimeSynchronizer(
-            [self.sub_encoder_left, self.sub_encoder_right], 1, 1
-        )
-        self.ts_encoders.registerCallback(self.cb_ts_encoders_hardcoded)
 
         self.params_update = rospy.Timer(rospy.Duration.from_sec(1.0), self.updateParams)
         self.reset_odometry()
@@ -80,9 +88,9 @@ class UnicornIntersectionNode(DTROS):
 
     def check_if_go(self):
         if (self.stop_line_pose_received and self.turn_type_received and self.internal_state == "READY"):
-            rospy.loginfo("[unicorn_intersection_node] We have what we need, calculating reference trajectory")
-            self.reference_trajectory = self.calculate_goal_trajectory()
-            rospy.loginfo(f"[unicorn_intersection_node] Reference trajectory calculated: {self.reference_trajectory}")
+            rospy.loginfo("[unicorn_intersection_node] We have what we need, transfer to EXECUTING")
+            #self.reference_trajectory = self.calculate_goal_trajectory()
+            #rospy.loginfo(f"[unicorn_intersection_node] Reference trajectory calculated: {self.reference_trajectory}")
             self.reset_odometry()
             self.internal_state = "EXECUTING"
 
@@ -112,7 +120,7 @@ class UnicornIntersectionNode(DTROS):
         robot_frame_goal_pose = g.SE2.multiply(g.SE2.inverse(g_stop_pose), canonical_goal_pose)
 
         p, d = g.translation_angle_from_SE2(robot_frame_goal_pose)
-        rospy.loginfo(f"goal_pose in robot frame: position {p}, angle {d}")
+        rospy.loginfo(f"[unicorn_intersection_node] goal_pose in robot frame: position {p}, angle {d}")
 
         vel = g.SE2.algebra_from_group(robot_frame_goal_pose)
         alphas = [x / self.num_waypoints for x in range(1, self.num_waypoints + 1)]
@@ -161,9 +169,7 @@ class UnicornIntersectionNode(DTROS):
         self.wheelbase = 0.108
         self.iter_ = 0
 
-    # ================================================================
-    # HARDCODED EXPERIMENT CALLBACK
-    # ================================================================
+    
     def cb_ts_encoders_hardcoded(self, _left_encoder, _right_encoder):
         if self.internal_state != "EXECUTING":
             return
@@ -208,7 +214,7 @@ class UnicornIntersectionNode(DTROS):
     # ================================================================
     # ORIGINAL WAYPOINT / DEAD-RECKONING CALLBACK (kept for reference)
     # ================================================================
-    def cb_ts_encoders(self, left_encoder, right_encoder):
+    """def cb_ts_encoders(self, left_encoder, right_encoder):
         if self.internal_state != "EXECUTING": 
             return
 
@@ -275,7 +281,7 @@ class UnicornIntersectionNode(DTROS):
                 self.pub_trans_done.publish(msg_done)
                 rospy.loginfo("[unicorn_intersection_node] transition to lane following complete")
 
-
+"""
 
 
 

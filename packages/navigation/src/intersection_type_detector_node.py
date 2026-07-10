@@ -136,7 +136,7 @@ class IntersectionTypeDetectorNode(DTROS):
 
                 # Number of clusters found (excluding noise labeled as -1)
                 num_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-                print(f"Found {num_clusters} distinct red cluster(s).")
+                #print(f"Found {num_clusters} distinct red cluster(s).")
 
                 
 
@@ -215,7 +215,7 @@ class IntersectionTypeDetectorNode(DTROS):
                         # If it sits to the left of the horizontal middle line
                         if data['centroid_x'] < middle_x:
                             has_left = True
-                            print("its left")
+                            #print("its left")
                         # If it sits to the right of the horizontal middle line
                         elif data['centroid_x'] > middle_x:
                             has_right = True
@@ -223,7 +223,7 @@ class IntersectionTypeDetectorNode(DTROS):
                 else:
                     # Fallback Option: If no horizontal line is found, it's a T-junction missing a straight option
                     # Split the screen down the middle to classify remaining lines as Left or Right
-                    print("[Info] No middle horizontal stop line detected.")
+                    #print("[Info] No middle horizontal stop line detected.")
                     for k, data in cluster_summary.items():
                         if data['centroid_x'] < (width / 2.0):
                             has_left = True
@@ -237,12 +237,12 @@ class IntersectionTypeDetectorNode(DTROS):
                 if has_right: available_turns.append(2)
 
                 # --- Print Structured Output ---
-                rospy.loginfo(f"--- Slope-Refined Decision Matrix ---")
-                rospy.loginfo(f"Clusters Evaluated: {len(cluster_summary)}")
+                #rospy.loginfo(f"--- Slope-Refined Decision Matrix ---")
+                #rospy.loginfo(f"Clusters Evaluated: {len(cluster_summary)}")
                 for k, data in cluster_summary.items():
                     line_type = "Horizontal (Middle)" if data['is_horizontal'] else "Steep/Angled (Side)"
-                    rospy.loginfo(f"  * Cluster {k}: Center X={data['centroid_x']:.1f}, Slope={data['slope']:.3f} -> {line_type}")
-                rospy.loginfo(f"Encoded Output     : {available_turns}")
+                    #rospy.loginfo(f"  * Cluster {k}: Center X={data['centroid_x']:.1f}, Slope={data['slope']:.3f} -> {line_type}")
+                rospy.loginfo_throttle(5, f"[Intersection Type Detector Node] Detected Turns    : {available_turns}")
 
                 avail_turns_msg = Int64MultiArray()
                 avail_turns_msg.data = available_turns
