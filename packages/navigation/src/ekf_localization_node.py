@@ -34,9 +34,9 @@ import matplotlib
 matplotlib.use("Agg")  # headless — required inside a ROS node
 import matplotlib.pyplot as plt
 from std_msgs.msg import Header
-from navigation.tile_graph import (
-    TILE_SIZE, analyze_tile_traversals, classify_tiles, plot_street_graph
-)
+from navigation.tile_graph import *
+#    TILE_SIZE, analyze_tile_traversals, classify_tiles, plot_street_graph
+
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -282,9 +282,29 @@ class EKFLocalizationNode(DTROS):
         msg.data = np.array(cv2.imencode('.jpg', img_bgr)[1]).tobytes()
         return msg
 
-    def _build_trajectory_comparison_figure(self, smooth_traj):
-        #print("_build_trajectory_comparison_figure")
-        fig, ax = plt.subplots(figsize=(8, 8))
+    def _build_trajectory_comparison_figure(self, smooth_traj, ax=None):
+        """
+        Plot ground truth, EKF forward, and RTS-smoothed trajectory.
+        
+        Parameters
+        ----------
+        smooth_traj : np.ndarray
+            Smoothed trajectory (N, 2).
+        ax : matplotlib.axes.Axes, optional
+            Axis to draw on. If None, a new figure and axis are created.
+
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            The figure containing the plot.
+        ax : matplotlib.axes.Axes
+            The axis used for plotting.
+        """
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 8))
+        else:
+            fig = ax.figure
+
         if len(self.gt_trajectory) > 0:
             gt = np.array(self.gt_trajectory)
             ax.plot(gt[:, 0], gt[:, 1], color='green', linewidth=1.5, label='Ground truth')
@@ -295,58 +315,107 @@ class EKFLocalizationNode(DTROS):
         if smooth_traj.shape[0] > 0:
             ax.plot(smooth_traj[:, 0], smooth_traj[:, 1], color='blue',
                     linewidth=1.5, label='RTS-smoothed')
+
         ax.set_aspect('equal')
-        ax.set_xlabel("X [m]"); ax.set_ylabel("Y [m]")
+        ax.set_xlabel("X [m]")
+        ax.set_ylabel("Y [m]")
         ax.set_title("GT vs EKF vs RTS-smoothed trajectory")
         ax.legend(loc='best', fontsize=8)
-        ax.grid(True, linewidth=0.5, alpha=0.4)
-        return fig
+        
+        # Grid lines every 0.6m (tile size) to match tile maps
+        TILE_SIZE = 0.6
+        
+        # Get data bounds from all trajectories
+        all_data = []
+        if len(self.gt_trajectory) > 0:
+            all_data.append(np.array(self.gt_trajectory))
+        if len(self.ekf_trajectory) > 0:
+            all_data.append(np.array(self.ekf_trajectory))
+        if smooth_traj.shape[0] > 0:
+            all_data.append(smooth_traj)
+        
+        if all_data:
+            all_data = np.vstack(all_data)
+            
+            # Calculate tile-aligned grid boundaries
+            x_min = np.floor(all_data[:, 0].min() / TILE_SIZE) * TILE_SIZE
+            x_max = np.ceil(all_data[:, 0].max() / TILE_SIZE) * TILE_SIZE
+            y_min = np.floor(all_data[:, 1].min() / TILE_SIZE) * TILE_SIZE
+            y_max = np.ceil(all_data[:, 1].max() / TILE_SIZE) * TILE_SIZE
+            
+            # Create ticks at every 0.6m
+            x_ticks = np.arange(x_min, x_max + TILE_SIZE, TILE_SIZE)
+            y_ticks = np.arange(y_min, y_max + TILE_SIZE, TILE_SIZE)
+            
+            ax.set_xticks(x_ticks)
+            ax.set_yticks(y_ticks)
+            ax.grid(True, linestyle='-', linewidth=0.5, alpha=0.3, zorder=0)
+
+        return fig, ax
 
     def publish_corrected_trajectory_and_map(self):
-        #print("publish_corrected_trajectory_and_map")
         smooth_traj = self.ekf.rts_smooth()
-
         if len(smooth_traj) < 2:
             return
 
-        # -----------------------------
-        # save trajectory
-        # -----------------------------
         self.save_smoothed_trajectory(smooth_traj)
 
-        # -----------------------------
-        # trajectory comparison
-        # -----------------------------
-        fig = self._build_trajectory_comparison_figure(smooth_traj)
+        # --------------------------------------------
+        # 1. Extract probabilistic tile traversals
+        # --------------------------------------------
+        TILE_TYPES = [
+            "empty", "N-S", "E-W", "NE", "ES", "SW", "WN",
+            "NES", "ESW", "SWN", "WNE", "4-way"
+        ]
+        TILE_SIZE = 0.6
 
-        self.pub_trajectory_plot.publish(
-            self._fig_to_compressed_imgmsg(fig)
+        tile_probabilities, uncertainty, vote_counts, total_visits = analyze_tile_traversals_tile_types(
+            smooth_traj, tile_size=TILE_SIZE, tile_types=TILE_TYPES
         )
 
+        observed_tiles = {pos: max(probs, key=probs.get) for pos, probs in tile_probabilities.items()}
+
+        final_types, intersection_directions, updated_observed = propagate_constraints(
+            vote_counts=vote_counts,
+            total_visits=total_visits,
+            observed_tiles=observed_tiles,
+            max_iterations=25,
+            damping=0.4,
+            verbose=False,
+        )
+
+        bp_classification, bp_tile_counts = bp_to_street_graph_inputs(final_types)
+
+        # --------------------------------------------
+        # 2. Build the 2×2 combined figure
+        # --------------------------------------------
+        fig = plt.figure(figsize=(16, 9))
+        gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+
+        # --- Trajectory comparison (top‑left) ---
+        ax_traj = fig.add_subplot(gs[0, 0])
+        _, _ = self._build_trajectory_comparison_figure(smooth_traj, ax=ax_traj)
+
+        # --- Tile probabilities (top‑right) ---
+        ax_prob = fig.add_subplot(gs[0, 1])
+        plot_tile_probabilities(tile_probabilities, uncertainty,
+                                tile_size=TILE_SIZE, ax=ax_prob)
+
+        # --- Globally consistent tile types (bottom‑left) ---
+        ax_types = fig.add_subplot(gs[1, 0])
+        plot_tile_types(final_types, updated_observed,
+                        tile_size=TILE_SIZE, ax=ax_types)
+
+        # --- Street graph (bottom‑right) ---
+        ax_graph = fig.add_subplot(gs[1, 1])
+        plot_street_graph(bp_classification, bp_tile_counts,
+                        tile_size=TILE_SIZE, min_events=1, ax=ax_graph)
+
+        # --------------------------------------------
+        # 3. Publish the combined figure
+        # --------------------------------------------
+        self.pub_street_graph_plot.publish(self._fig_to_compressed_imgmsg(fig))
         plt.close(fig)
-
-        # -----------------------------
-        # rebuild map from smoothed path
-        # -----------------------------
-        tile_counts = analyze_tile_traversals(
-            smooth_traj,
-            tile_size=TILE_SIZE,
-        )
-
-        classification = classify_tiles(tile_counts)
-
-        fig, _, _, _ = plot_street_graph(
-            classification,
-            tile_counts,
-            tile_size=TILE_SIZE,
-            show=False,
-        )
-        self.pub_street_graph_plot.publish(
-            self._fig_to_compressed_imgmsg(fig)
-        )
-        #print("plot_street_graph")
-        plt.close(fig)
-        #self.publish_clustered_graph_comparison(smooth_traj)
 
     #BEV_SLAM
     def read_params_from_calibration_file(self):
