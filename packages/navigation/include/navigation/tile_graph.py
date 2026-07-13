@@ -15,6 +15,8 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, Arc, Circle
+from itertools import product
+from scipy.spatial.distance import cdist
 
 warnings.filterwarnings('ignore')
 
@@ -278,104 +280,222 @@ def get_active_sides(tile_counts, min_events=1):
 # ============================================================
 # 5. Road rendering primitives
 # ============================================================
-def draw_tile_road(ax, i, j, ttype, active_sides,
-                    tile_size=TILE_SIZE,
-                    lane_offset=LANE_OFFSET):
 
+
+CURVE_CORNERS = {
+    frozenset(['N', 'E']): ('top-right', 180, 270),
+    frozenset(['N', 'W']): ('top-left', 270, 360),
+    frozenset(['S', 'E']): ('bottom-right', 90, 180),
+    frozenset(['S', 'W']): ('bottom-left', 0, 90),
+}
+
+CORNER_POS = lambda i, j, ts: {
+    'top-right': (i * ts + ts, j * ts + ts),
+    'top-left': (i * ts, j * ts + ts),
+    'bottom-right': (i * ts + ts, j * ts),
+    'bottom-left': (i * ts, j * ts),
+}
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
+from matplotlib.patches import Rectangle, Arc
+
+# ============================================================
+# Constants
+# ============================================================
+TILE_SIZE = 0.6
+LANE_OFFSET = TILE_SIZE * 0.15  # distance from centerline to each lane
+EDGE_MARGIN = TILE_SIZE * 0.15
+ROAD_WIDTH = TILE_SIZE - 2 * EDGE_MARGIN
+
+RIGHT_LANE = EDGE_MARGIN + ROAD_WIDTH * 0.25
+LEFT_LANE = EDGE_MARGIN + ROAD_WIDTH * 0.75
+
+
+def get_active_sides(tile_counts, min_events=1):
+    """Same logic as classify_tiles, exposed separately so we can reuse it."""
+    active = {}
+    for tile, dirs in tile_counts.items():
+        active[tile] = [d for d, (e, x) in dirs.items() if (e + x) >= min_events]
+    return active
+
+
+# ---------------------------------------------------------------------
+# 1. Realistic road markings per tile (white/yellow/red tape per spec)
+# ---------------------------------------------------------------------
+
+CURVE_CORNERS = {
+    frozenset(['N', 'E']): ('top-right', 180, 270),
+    frozenset(['N', 'W']): ('top-left', 270, 360),
+    frozenset(['S', 'E']): ('bottom-right', 90, 180),
+    frozenset(['S', 'W']): ('bottom-left', 0, 90),
+}
+
+def CORNER_POS(i, j, ts):
+    return {
+        'top-right': (i * ts + ts, j * ts + ts),
+        'top-left': (i * ts, j * ts + ts),
+        'bottom-right': (i * ts + ts, j * ts),
+        'bottom-left': (i * ts, j * ts),
+    }
+
+
+def draw_tile_road(ax, i, j, ttype, active_sides, tile_size=TILE_SIZE, lane_offset=LANE_OFFSET):
     x0, y0 = i * tile_size, j * tile_size
     cx, cy = x0 + tile_size / 2, y0 + tile_size / 2
 
-    bg = '#2e7d32' if ttype == 'empty' else 'black'
-    ax.add_patch(Rectangle((x0, y0), tile_size, tile_size,
-                            facecolor=bg, edgecolor='none', zorder=1))
-
+    bg_color = '#2e7d32' if ttype == 'empty' else 'black'  # green stand-in per spec note
+    ax.add_patch(Rectangle((x0, y0), tile_size, tile_size, facecolor=bg_color,
+                            edgecolor='none', zorder=1))
     if ttype == 'empty':
         return
 
     def white(p1, p2):
-        ax.plot([p1[0], p2[0]], [p1[1], p2[1]],
-                color='white', linewidth=2, zorder=2)
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color='white', linewidth=2, zorder=2)
 
-    def yellow(p1, p2):
-        ax.plot([p1[0], p2[0]], [p1[1], p2[1]],
-                color='#f4d500', linewidth=1.5,
-                linestyle=(0, (3, 2)), zorder=2)
+    def yellow_dash(p1, p2):
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color='#f4d500',
+                 linewidth=1.5, linestyle=(0, (3, 2)), zorder=2)
 
-    if ttype == "straight":
-        if "N" in active_sides and "S" in active_sides:
-            yellow((cx, y0), (cx, y0 + tile_size))
+    def red_stop(p1, p2):
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color='red', linewidth=3, zorder=3)
+
+    if ttype == 'straight':
+        if 'N' in active_sides and 'S' in active_sides:
+            yellow_dash((cx, y0), (cx, y0 + tile_size))
             white((x0 + lane_offset, y0), (x0 + lane_offset, y0 + tile_size))
-            white((x0 + tile_size - lane_offset, y0),
-                  (x0 + tile_size - lane_offset, y0 + tile_size))
+            white((x0 + tile_size - lane_offset, y0), (x0 + tile_size - lane_offset, y0 + tile_size))
         else:
-            yellow((x0, cy), (x0 + tile_size, cy))
+            yellow_dash((x0, cy), (x0 + tile_size, cy))
             white((x0, y0 + lane_offset), (x0 + tile_size, y0 + lane_offset))
-            white((x0, y0 + tile_size - lane_offset),
-                  (x0 + tile_size, y0 + tile_size - lane_offset))
+            white((x0, y0 + tile_size - lane_offset), (x0 + tile_size, y0 + tile_size - lane_offset))
 
-    elif ttype == "curve":
-        sides = active_sides[:2]
-        key = frozenset(sides)
-
-        corners = {
-            frozenset(["N", "E"]): (x0 + tile_size, y0 + tile_size, 180, 270),
-            frozenset(["N", "W"]): (x0, y0 + tile_size, 270, 360),
-            frozenset(["S", "E"]): (x0 + tile_size, y0, 90, 180),
-            frozenset(["S", "W"]): (x0, y0, 0, 90),
-        }
-
-        if key not in corners:
+    elif ttype == 'curve':
+        key = frozenset(active_sides[:2])
+        if key not in CURVE_CORNERS:
             return
 
-        cx0, cy0, t1, t2 = corners[key]
+        corner_name, t1, t2 = CURVE_CORNERS[key]
+        ccx, ccy = CORNER_POS(i, j, tile_size)[corner_name]
 
-        ax.add_patch(Arc(
-            (cx0, cy0), tile_size, tile_size,
-            theta1=t1, theta2=t2,
-            color='#f4d500', linewidth=1.5,
-            linestyle=(0, (3, 2)), zorder=2
-        ))
+        center_r = tile_size / 2
+        inner_r = lane_offset
+        outer_r = tile_size - lane_offset
 
-    elif ttype in ("intersection_3way", "intersection_4way"):
-        mid = {
-            "N": (cx, y0 + tile_size),
-            "S": (cx, y0),
-            "E": (x0 + tile_size, cy),
-            "W": (x0, cy),
+        ax.add_patch(Arc((ccx, ccy), 2*center_r, 2*center_r,
+                        theta1=t1, theta2=t2,
+                        color='#f4d500', linewidth=1.5,
+                        linestyle=(0, (3, 2)), zorder=2))
+
+        ax.add_patch(Arc((ccx, ccy), 2*inner_r, 2*inner_r,
+                        theta1=t1, theta2=t2,
+                        color='white', linewidth=2, zorder=2))
+
+        ax.add_patch(Arc((ccx, ccy), 2*outer_r, 2*outer_r,
+                        theta1=t1, theta2=t2,
+                        color='white', linewidth=2, zorder=2))
+
+    elif ttype in ('intersection_3way', 'intersection_4way'):
+        side_mid = {
+            'N': (cx, y0 + tile_size),
+            'S': (cx, y0),
+            'E': (x0 + tile_size, cy),
+            'W': (x0, cy),
         }
 
-        for s in active_sides:
-            yellow((cx, cy), mid[s])
+        stop_offset = tile_size * 0.12
+        r = lane_offset
 
-        if "N" not in active_sides:
-            white((x0, y0 + tile_size - lane_offset),
-                  (x0 + tile_size, y0 + tile_size - lane_offset))
-        if "S" not in active_sides:
+        def white_arc(center, t1, t2):
+            ax.add_patch(Arc(center, 2*r, 2*r,
+                            theta1=t1, theta2=t2,
+                            color='white', linewidth=2, zorder=2))
+
+        # -----------------------
+        # Yellow center lines
+        # -----------------------
+        for side in active_sides:
+            yellow_dash((cx, cy), side_mid[side])
+
+        # -----------------------
+        # White lane markings
+        # -----------------------
+
+        # straight road markings (same as straight tiles)
+        if 'N' not in active_sides:            
+            white((x0, y0 + tile_size - lane_offset), (x0 + tile_size, y0 + tile_size - lane_offset))
+        if 'S' not in active_sides:
             white((x0, y0 + lane_offset), (x0 + tile_size, y0 + lane_offset))
-        if "E" not in active_sides:
-            white((x0 + tile_size - lane_offset, y0),
-                  (x0 + tile_size - lane_offset, y0 + tile_size))
-        if "W" not in active_sides:
+        if 'E' not in active_sides:
+            white((x0 + tile_size - lane_offset, y0), (x0 + tile_size - lane_offset, y0 + tile_size))
+        if 'W' not in active_sides:
             white((x0 + lane_offset, y0), (x0 + lane_offset, y0 + tile_size))
 
+        # Corner arcs (only where two roads meet)
+        if 'N' in active_sides and 'E' in active_sides:
+            white_arc((x0 + tile_size, y0 + tile_size), 180, 270)
 
-# ============================================================
-# 6. Tile-road plot (fixed: ax reuse + show + always returns fig, ax)
-# ============================================================
-def plot_tile_roads(classification,
-                     tile_counts,
-                     tile_size=TILE_SIZE,
-                     min_events=1,
-                     title="Duckietown Map",
-                     ax=None,
-                     show=False):
+        if 'E' in active_sides and 'S' in active_sides:
+            white_arc((x0 + tile_size, y0), 90, 180)
 
-    active = get_active_sides(tile_counts, min_events)
+        if 'S' in active_sides and 'W' in active_sides:
+            white_arc((x0, y0), 0, 90)
 
+        if 'W' in active_sides and 'N' in active_sides:
+            white_arc((x0, y0 + tile_size), 270, 360)
+
+        # -----------------------
+        # Stop lines
+        # -----------------------
+
+        # North (coming from top, shifts LEFT in lane frame)
+        if 'N' in active_sides:
+            yy = y0 + tile_size - stop_offset
+            red_stop((cx - 2*lane_offset, yy), (cx, yy))
+
+        # South (coming from bottom, shifts RIGHT)
+        if 'S' in active_sides:
+            yy = y0 + stop_offset
+            red_stop((cx, yy), (cx + 2*lane_offset, yy))
+
+        # East (coming from right, shifts UP)
+        if 'E' in active_sides:
+            xx = x0 + tile_size - stop_offset
+            red_stop((xx, cy), (xx, cy + 2*lane_offset))
+
+        # West (coming from left, shifts DOWN)
+        if 'W' in active_sides:
+            xx = x0 + stop_offset
+            red_stop((xx, cy - 2*lane_offset), (xx, cy))
+
+
+def plot_tile_roads(classification, tile_counts, tile_size=TILE_SIZE, 
+                     min_events=1, title="Duckietown Road Layout", ax=None, show=False):
+    
+    # If classification is empty, create a simple plot with a message
+    if not classification or len(classification) == 0:
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(10, 10))
+        else:
+            fig = ax.figure
+        
+        ax.text(0.5, 0.5, "No classification data available\nTrajectory too short for inference",
+                ha='center', va='center', transform=ax.transAxes, fontsize=14)
+        ax.set_xlim(-1, 1)
+        ax.set_ylim(-1, 1)
+        ax.set_aspect('equal')
+        ax.set_title(title)
+        ax.grid(True, linewidth=0.5, color='gray', alpha=0.3, linestyle='-')
+        
+        if show:
+            plt.show()
+        return fig, ax
+    
+    active_sides = get_active_sides(tile_counts, min_events)
     tiles = list(classification.keys())
-    if not tiles:
-        raise ValueError("classification is empty -- nothing to plot")
-
+    
     i_min, i_max = min(t[0] for t in tiles), max(t[0] for t in tiles)
     j_min, j_max = min(t[1] for t in tiles), max(t[1] for t in tiles)
 
@@ -383,123 +503,143 @@ def plot_tile_roads(classification,
         fig, ax = plt.subplots(figsize=(10, 10))
     else:
         fig = ax.figure
-
+        
     for i in range(i_min, i_max + 1):
         for j in range(j_min, j_max + 1):
             ttype = classification.get((i, j), "empty")
-            sides = active.get((i, j), [])
+            sides = active_sides.get((i, j), [])
             draw_tile_road(ax, i, j, ttype, sides, tile_size)
 
     ax.set_xlim(i_min * tile_size, (i_max + 1) * tile_size)
     ax.set_ylim(j_min * tile_size, (j_max + 1) * tile_size)
-    ax.set_aspect("equal")
+    
+    # Set ticks at tile boundaries (every 0.6m)
+    ax.xaxis.set_major_locator(MultipleLocator(tile_size))
+    ax.yaxis.set_major_locator(MultipleLocator(tile_size))
+    
+    ax.set_aspect('equal')
     ax.set_title(title)
-    ax.set_xlabel("X [m]")
-    ax.set_ylabel("Y [m]")
-    ax.grid(True, linewidth=0.5, alpha=0.4)
-
+    ax.set_xlabel("X Position (m)")
+    ax.set_ylabel("Y Position (m)")
+    ax.grid(True, linewidth=0.5, color='gray', alpha=0.3, linestyle='-')
+    
     if show:
         plt.show()
-
+        
     return fig, ax
 
 
-# ============================================================
-# 7. Street graph construction + plot
-# ============================================================
-def build_street_graph(classification,
-                        tile_counts,
-                        tile_size=TILE_SIZE,
-                        lane_offset=LANE_OFFSET,
-                        min_events=1):
+# ---------------------------------------------------------------------
+# 2. Bidirectional lane graph: nodes at tile-edge positions
+# ---------------------------------------------------------------------
 
-    active = get_active_sides(tile_counts, min_events)
+def _lane_nodes_for_tile(i, j, tile_size, lane_offset):
+    """Returns dict: side -> {'in': (x,y,rot_deg), 'out': (x,y,rot_deg)}"""
+    x0, y0 = i * tile_size, j * tile_size
+    cx, cy = x0 + tile_size / 2, y0 + tile_size / 2
+    return {
+        'N': {'out': (cx + lane_offset, y0 + tile_size, 90),
+              'in':  (cx - lane_offset, y0 + tile_size, -90)},
+        'S': {'out': (cx - lane_offset, y0, -90),
+              'in':  (cx + lane_offset, y0, 90)},
+        'E': {'out': (x0 + tile_size, cy - lane_offset, 0),
+              'in':  (x0 + tile_size, cy + lane_offset, 180)},
+        'W': {'out': (x0, cy + lane_offset, 180),
+              'in':  (x0, cy - lane_offset, 0)},
+    }
 
-    node_map = {}
-    node_pose = {}
+
+def build_street_graph(classification, tile_counts, tile_size=TILE_SIZE,
+                        lane_offset=LANE_OFFSET, min_events=1):
+    active_sides = get_active_sides(tile_counts, min_events)
+
+    node_registry = {}   # (round_x, round_y) -> node_id
+    node_pose = {}        # node_id -> (x, y, rot_deg)
     edges = []
     next_id = 0
 
     def get_node(pos):
         nonlocal next_id
         key = (round(pos[0], 4), round(pos[1], 4))
-        if key not in node_map:
-            node_map[key] = next_id
+        if key not in node_registry:
+            node_registry[key] = next_id
             node_pose[next_id] = pos
             next_id += 1
-        return node_map[key]
-
-    def lane_nodes(i, j):
-        x0, y0 = i * tile_size, j * tile_size
-        cx, cy = x0 + tile_size / 2, y0 + tile_size / 2
-
-        return {
-            "N": ((cx, y0 + tile_size), (cx, y0 + tile_size)),
-            "S": ((cx, y0), (cx, y0)),
-            "E": ((x0 + tile_size, cy), (x0 + tile_size, cy)),
-            "W": ((x0, cy), (x0, cy)),
-        }
+        return node_registry[key]
 
     for (i, j), ttype in classification.items():
-        sides = active.get((i, j), [])
-        if not sides:
+        sides = active_sides.get((i, j), [])
+        if ttype == 'empty' or len(sides) == 0:
             continue
 
-        lanes = lane_nodes(i, j)
+        lanes = _lane_nodes_for_tile(i, j, tile_size, lane_offset)
+        side_nodes = {s: {'in': get_node(lanes[s]['in']), 'out': get_node(lanes[s]['out'])}
+                      for s in sides}
 
-        for a in sides:
-            for b in sides:
-                if a == b:
-                    continue
-                n1 = get_node(lanes[a][0])
-                n2 = get_node(lanes[b][1])
-                edges.append((n1, n2))
+        if ttype == 'straight':
+            if set(['N', 'S']).issubset(sides):
+                edges.append((side_nodes['N']['in'], side_nodes['S']['out']))
+                edges.append((side_nodes['S']['in'], side_nodes['N']['out']))
+            elif set(['E', 'W']).issubset(sides):
+                edges.append((side_nodes['E']['in'], side_nodes['W']['out']))
+                edges.append((side_nodes['W']['in'], side_nodes['E']['out']))
+
+        elif ttype == 'curve' and len(sides) == 2:
+            a, b = sides[0], sides[1]
+            edges.append((side_nodes[a]['in'], side_nodes[b]['out']))
+            edges.append((side_nodes[b]['in'], side_nodes[a]['out']))
+
+        elif ttype in ('intersection_3way', 'intersection_4way'):
+            for a in sides:
+                for b in sides:
+                    if a == b:
+                        continue
+                    edges.append((side_nodes[a]['in'], side_nodes[b]['out']))
 
     return node_pose, edges
 
 
-def plot_street_graph(classification,
-                       tile_counts,
-                       tile_size=TILE_SIZE,
-                       min_events=1,
-                       ax=None,
-                       show=False):
+# ---------------------------------------------------------------------
+# 3. Draw the street graph on top of the road plot
+# ---------------------------------------------------------------------
 
-    node_pose, edges = build_street_graph(
-        classification, tile_counts, tile_size, LANE_OFFSET, min_events
-    )
+def plot_street_graph(classification, tile_counts, tile_size=TILE_SIZE,
+                       lane_offset=LANE_OFFSET, min_events=1, ax=None, show=False):
+    node_pose, edges = build_street_graph(classification, tile_counts, tile_size,
+                                           lane_offset, min_events)
 
-    fig, ax = plot_tile_roads(
-        classification, tile_counts, tile_size, min_events,
-        title="Street Graph", ax=ax
-    )
+    # Use the provided ax if available
+    if ax is None:
+        fig, ax = plot_tile_roads(classification, tile_counts, tile_size, min_events,
+                                   title="Street Graph over Abstracted Tile Layout")
+    else:
+        fig = ax.figure
+        # Draw tile roads on the provided axis
+        plot_tile_roads(classification, tile_counts, tile_size, min_events,
+                        title="Street Graph over Abstracted Tile Layout", ax=ax)
 
-    for a, b in edges:
-        x1, y1 = node_pose[a]
-        x2, y2 = node_pose[b]
-
-        ax.annotate(
-            "", xy=(x2, y2), xytext=(x1, y1),
-            arrowprops=dict(arrowstyle="->", color="cyan", lw=1.2, alpha=0.8),
-            zorder=5
-        )
+    for (a, b) in edges:
+        xA, yA, _ = node_pose[a]
+        xB, yB, _ = node_pose[b]
+        ax.annotate("", xy=(xB, yB), xytext=(xA, yA),
+                    arrowprops=dict(arrowstyle="->", color="cyan", lw=1.3,
+                                     alpha=0.85, shrinkA=3, shrinkB=3), zorder=5)
 
     xs = [p[0] for p in node_pose.values()]
     ys = [p[1] for p in node_pose.values()]
-    ax.scatter(xs, ys, s=20, c="deepskyblue", edgecolors="black", zorder=6)
-    
-    # Use classification (not tile_probabilities) to get tile indices
-    tile_indices_x = sorted({pos[0] for pos in classification.keys()})
-    tile_indices_y = sorted({pos[1] for pos in classification.keys()})
-    x_ticks = np.arange(min(tile_indices_x), max(tile_indices_x) + 2) * tile_size
-    y_ticks = np.arange(min(tile_indices_y), max(tile_indices_y) + 2) * tile_size
-    ax.set_xticks(x_ticks)
-    ax.set_yticks(y_ticks)
-    ax.grid(True, linestyle='-', linewidth=0.5, alpha=0.3, zorder=0)
+    thetas = np.radians([p[2] for p in node_pose.values()])
+    ax.scatter(xs, ys, c='deepskyblue', s=25, zorder=6, edgecolors='black', linewidth=0.5)
+    ax.quiver(xs, ys, np.cos(thetas), np.sin(thetas), color='orange',
+              scale=25, width=0.004, zorder=7)
 
+    # Ensure grid lines at 0.6m intervals
+    ax.xaxis.set_major_locator(MultipleLocator(tile_size))
+    ax.yaxis.set_major_locator(MultipleLocator(tile_size))
+    ax.grid(True, linewidth=0.5, color='gray', alpha=0.3, linestyle='-')
+    
     if show:
         plt.show()
-
+        
     return fig, ax, node_pose, edges
 
 
@@ -781,7 +921,8 @@ _TYPE_COLOR_MAP = {
 
 
 def plot_tile_probabilities(tile_probabilities, uncertainty,
-                             tile_size=TILE_SIZE, ax=None, show=False):
+                             tile_size=TILE_SIZE, ax=None, show=False,
+                             title="Per-Tile Belief (Pre-Propagation)"):
     """
     Visualizes the raw per-tile belief BEFORE global constraint propagation:
     the most likely structural type per tile, shaded by confidence
@@ -794,7 +935,9 @@ def plot_tile_probabilities(tile_probabilities, uncertainty,
         fig = ax.figure
 
     if not tile_probabilities:
-        ax.set_title("Tile Probabilities (no data)")
+        ax.text(0.5, 0.5, "No tile probability data available", 
+                ha='center', va='center', transform=ax.transAxes, fontsize=12)
+        ax.set_title(title)
         if show:
             plt.show()
         return fig, ax
@@ -826,18 +969,23 @@ def plot_tile_probabilities(tile_probabilities, uncertainty,
             ax.text(cx, cy, f"{best_type}\n{best_prob:.2f}",
                     ha="center", va="center", fontsize=6)
 
-    ax.set_xlim(min(xs) * tile_size - 1.0, max(xs) * tile_size + 1.0)
-    ax.set_ylim(min(ys) * tile_size - 1.0, max(ys) * tile_size + 1.0)
+    if xs:
+        ax.set_xlim(min(xs) * tile_size - 1.0, max(xs) * tile_size + 1.0)
+        ax.set_ylim(min(ys) * tile_size - 1.0, max(ys) * tile_size + 1.0)
+    
     ax.set_aspect("equal")
-    # After setting xlim/ylim
-    tile_indices_x = sorted({pos[0] for pos in tile_probabilities.keys()})  # or use i_min, i_max from tiles
+    
+    # Tile-aligned grid
+    tile_indices_x = sorted({pos[0] for pos in tile_probabilities.keys()})
     tile_indices_y = sorted({pos[1] for pos in tile_probabilities.keys()})
-    x_ticks = np.arange(min(tile_indices_x), max(tile_indices_x) + 2) * tile_size
-    y_ticks = np.arange(min(tile_indices_y), max(tile_indices_y) + 2) * tile_size
-    ax.set_xticks(x_ticks)
-    ax.set_yticks(y_ticks)
-    ax.grid(True, linestyle='-', linewidth=0.5, alpha=0.3, zorder=0)
-    ax.set_title("Per-Tile Belief (Pre-Propagation)", fontsize=12, pad=10)
+    if tile_indices_x and tile_indices_y:
+        x_ticks = np.arange(min(tile_indices_x), max(tile_indices_x) + 2) * tile_size
+        y_ticks = np.arange(min(tile_indices_y), max(tile_indices_y) + 2) * tile_size
+        ax.set_xticks(x_ticks)
+        ax.set_yticks(y_ticks)
+        ax.grid(True, linestyle='-', linewidth=0.5, alpha=0.3, zorder=0)
+    
+    ax.set_title(title, fontsize=12, pad=10)
 
     if own_fig:
         fig.tight_layout()
@@ -848,7 +996,7 @@ def plot_tile_probabilities(tile_probabilities, uncertainty,
 
 
 def plot_tile_types(final_types, observed_tiles, tile_size=TILE_SIZE,
-                     ax=None, show=False):
+                     ax=None, show=False, title="Globally Consistent Inferred Road Layout"):
     own_fig = ax is None
     if own_fig:
         fig, ax = plt.subplots(figsize=(12, 10))
@@ -884,12 +1032,14 @@ def plot_tile_types(final_types, observed_tiles, tile_size=TILE_SIZE,
     # Use final_types (not tile_probabilities) to get tile indices
     tile_indices_x = sorted({pos[0] for pos in final_types.keys()})
     tile_indices_y = sorted({pos[1] for pos in final_types.keys()})
-    x_ticks = np.arange(min(tile_indices_x), max(tile_indices_x) + 2) * tile_size
-    y_ticks = np.arange(min(tile_indices_y), max(tile_indices_y) + 2) * tile_size
-    ax.set_xticks(x_ticks)
-    ax.set_yticks(y_ticks)
-    ax.grid(True, linestyle='-', linewidth=0.5, alpha=0.3, zorder=0)
-    ax.set_title("Globally Consistent Inferred Road Layout", fontsize=12, pad=10)
+    if tile_indices_x and tile_indices_y:
+        x_ticks = np.arange(min(tile_indices_x), max(tile_indices_x) + 2) * tile_size
+        y_ticks = np.arange(min(tile_indices_y), max(tile_indices_y) + 2) * tile_size
+        ax.set_xticks(x_ticks)
+        ax.set_yticks(y_ticks)
+        ax.grid(True, linestyle='-', linewidth=0.5, alpha=0.3, zorder=0)
+    
+    ax.set_title(title, fontsize=12, pad=10)
 
     if own_fig:
         fig.tight_layout()
@@ -1006,3 +1156,7 @@ def plot_pipeline_overview(tile_probabilities, uncertainty,
         plt.show()
 
     return fig, axes
+
+
+
+

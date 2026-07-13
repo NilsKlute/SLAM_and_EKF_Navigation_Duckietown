@@ -35,6 +35,7 @@ matplotlib.use("Agg")  # headless — required inside a ROS node
 import matplotlib.pyplot as plt
 from std_msgs.msg import Header
 from navigation.tile_graph import *
+from navigation.fit_trajectory import *
 #    TILE_SIZE, analyze_tile_traversals, classify_tiles, plot_street_graph
 
 
@@ -352,7 +353,7 @@ class EKFLocalizationNode(DTROS):
             ax.grid(True, linestyle='-', linewidth=0.5, alpha=0.3, zorder=0)
 
         return fig, ax
-
+    
     def publish_corrected_trajectory_and_map(self):
         smooth_traj = self.ekf.rts_smooth()
         if len(smooth_traj) < 2:
@@ -361,7 +362,7 @@ class EKFLocalizationNode(DTROS):
         self.save_smoothed_trajectory(smooth_traj)
 
         # --------------------------------------------
-        # 1. Extract probabilistic tile traversals
+        # 1. Original trajectory analysis (RTS-smoothed)
         # --------------------------------------------
         TILE_TYPES = [
             "empty", "N-S", "E-W", "NE", "ES", "SW", "WN",
@@ -369,6 +370,7 @@ class EKFLocalizationNode(DTROS):
         ]
         TILE_SIZE = 0.6
 
+        # Original analysis
         tile_probabilities, uncertainty, vote_counts, total_visits = analyze_tile_traversals_tile_types(
             smooth_traj, tile_size=TILE_SIZE, tile_types=TILE_TYPES
         )
@@ -387,35 +389,115 @@ class EKFLocalizationNode(DTROS):
         bp_classification, bp_tile_counts = bp_to_street_graph_inputs(final_types)
 
         # --------------------------------------------
-        # 2. Build the 2×2 combined figure
+        # 2. Fitted trajectory analysis (using infer_map)
         # --------------------------------------------
-        fig = plt.figure(figsize=(16, 9))
-        gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+        # Convert trajectory to [x, y, theta] format
+        trajectory = smooth_traj[:, :3]  # Assuming smooth_traj has x, y, theta
+        
+        # Run the inference with debug=False to reduce output
+        fitted_probabilities, fitted_uncertainty, fitted_sections, source_sections, fitted_vote_counts, fitted_total_visits = infer_map(
+            trajectory,
+            templates,
+            debug=False  # Set to True for detailed output
+        )
+        
+        # Concatenate fitted trajectory for plotting
+        if len(fitted_sections) > 0:
+            fitted_traj = np.concatenate(fitted_sections, axis=0)
+        else:
+            fitted_traj = np.empty((0, 3))
+        
+        # Check if fitted inference produced valid results
+        if not fitted_probabilities or len(fitted_probabilities) == 0:
+            print("Warning: Fitted inference produced no results, skipping publication")
+            return
+        
+        # Convert fitted probabilities to observed tiles format
+        fitted_observed_tiles = {pos: max(probs, key=probs.get) for pos, probs in fitted_probabilities.items()}
+        
+        # Run propagate_constraints on fitted results
+        fitted_final_types, fitted_intersection_directions, fitted_updated_observed = propagate_constraints(
+            vote_counts=fitted_vote_counts,
+            total_visits=fitted_total_visits,
+            observed_tiles=fitted_observed_tiles,
+            max_iterations=25,
+            damping=0.4,
+            verbose=False,
+        )
+        
+        # Convert fitted final types to classification and tile_counts
+        fitted_classification = {}
+        fitted_tile_counts = {}
+        for pos, tile_type in fitted_final_types.items():
+            fitted_classification[pos] = BP_TO_CLASSIFICATION.get(tile_type, "empty")
+            # Create tile_counts for street graph
+            active = DIR_SETS.get(tile_type, set())
+            fitted_tile_counts[pos] = {d: ([1, 1] if d in active else [0, 0]) for d in "NESW"}
+        
+        # Check if fitted classification has any non-empty tiles
+        has_valid_tiles = any(v != "empty" for v in fitted_classification.values())
+        if not has_valid_tiles:
+            print("Warning: Fitted classification has no valid tiles, skipping publication")
+            return
 
-        # --- Trajectory comparison (top‑left) ---
+        # --------------------------------------------
+        # 3. Build the 2×4 combined figure
+        # --------------------------------------------
+        fig = plt.figure(figsize=(20, 10))
+        gs = fig.add_gridspec(2, 4, hspace=0.3, wspace=0.3)
+
+        # --- Row 1: Original (RTS-smoothed) results ---
+        
+        # Trajectory comparison (top-left)
         ax_traj = fig.add_subplot(gs[0, 0])
         _, _ = self._build_trajectory_comparison_figure(smooth_traj, ax=ax_traj)
 
-        # --- Tile probabilities (top‑right) ---
+        # Tile probabilities (top-middle-left)
         ax_prob = fig.add_subplot(gs[0, 1])
         plot_tile_probabilities(tile_probabilities, uncertainty,
-                                tile_size=TILE_SIZE, ax=ax_prob)
+                                tile_size=TILE_SIZE, ax=ax_prob,
+                                title="Per-Tile Belief (RTS)")
 
-        # --- Globally consistent tile types (bottom‑left) ---
-        ax_types = fig.add_subplot(gs[1, 0])
+        # Tile types (top-middle-right)
+        ax_types = fig.add_subplot(gs[0, 2])
         plot_tile_types(final_types, updated_observed,
-                        tile_size=TILE_SIZE, ax=ax_types)
+                        tile_size=TILE_SIZE, ax=ax_types,
+                        title="After Belief Propagation (RTS)")
 
-        # --- Street graph (bottom‑right) ---
-        ax_graph = fig.add_subplot(gs[1, 1])
+        # Street graph (top-right)
+        ax_graph = fig.add_subplot(gs[0, 3])
         plot_street_graph(bp_classification, bp_tile_counts,
                         tile_size=TILE_SIZE, min_events=1, ax=ax_graph)
 
+        # --- Row 2: Fitted trajectory results ---
+        
+        # Fitted trajectory comparison (bottom-left)
+        ax_fitted_traj = fig.add_subplot(gs[1, 0])
+        _, _ = self._build_fitted_trajectory_comparison_figure(smooth_traj, fitted_traj, ax=ax_fitted_traj)
+        
+        # Fitted tile probabilities (bottom-middle-left)
+        ax_fitted_prob = fig.add_subplot(gs[1, 1])
+        plot_tile_probabilities(fitted_probabilities, fitted_uncertainty,
+                                tile_size=TILE_SIZE, ax=ax_fitted_prob,
+                                title="Per-Tile Belief (Fitted)")
+
+        # Fitted tile types (bottom-middle-right)
+        ax_fitted_types = fig.add_subplot(gs[1, 2])
+        plot_tile_types(fitted_final_types, fitted_updated_observed,
+                        tile_size=TILE_SIZE, ax=ax_fitted_types,
+                        title="After Belief Propagation (Fitted)")
+
+        # Fitted street graph (bottom-right)
+        ax_fitted_graph = fig.add_subplot(gs[1, 3])
+        plot_street_graph(fitted_classification, fitted_tile_counts,
+                        tile_size=TILE_SIZE, min_events=1, ax=ax_fitted_graph)
+
         # --------------------------------------------
-        # 3. Publish the combined figure
+        # 4. Publish the combined figure
         # --------------------------------------------
         self.pub_street_graph_plot.publish(self._fig_to_compressed_imgmsg(fig))
         plt.close(fig)
+
 
     #BEV_SLAM
     def read_params_from_calibration_file(self):
@@ -881,8 +963,67 @@ class EKFLocalizationNode(DTROS):
         return np.hstack([ids, arr])
 
 
+    def _build_fitted_trajectory_comparison_figure(self, smooth_traj, fitted_traj, ax=None):
+        """
+        Plot ground truth, EKF forward, RTS-smoothed, and fitted trajectory.
+        """
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 8))
+        else:
+            fig = ax.figure
+
+        if len(self.gt_trajectory) > 0:
+            gt = np.array(self.gt_trajectory)
+            ax.plot(gt[:, 0], gt[:, 1], color='green', linewidth=1.5, label='Ground truth')
+        if len(self.ekf_trajectory) > 0:
+            ekf = np.array(self.ekf_trajectory)
+            ax.plot(ekf[:, 0], ekf[:, 1], color='red', linewidth=1.0,
+                    linestyle='--', label='EKF (forward)')
+        if smooth_traj.shape[0] > 0:
+            ax.plot(smooth_traj[:, 0], smooth_traj[:, 1], color='blue',
+                    linewidth=1.5, label='RTS-smoothed')
+        if fitted_traj is not None and fitted_traj.shape[0] > 0:
+            ax.plot(fitted_traj[:, 0], fitted_traj[:, 1], color='purple',
+                    linewidth=2.0, linestyle='-.', label='Fitted Template')
+
+        ax.set_aspect('equal')
+        ax.set_xlabel("X [m]")
+        ax.set_ylabel("Y [m]")
+        ax.set_title("Trajectory with Fitted Template")
+        ax.legend(loc='best', fontsize=8)
+        
+        # Grid lines every 0.6m
+        TILE_SIZE = 0.6
+        all_data = []
+        if len(self.gt_trajectory) > 0:
+            all_data.append(np.array(self.gt_trajectory))
+        if len(self.ekf_trajectory) > 0:
+            all_data.append(np.array(self.ekf_trajectory))
+        if smooth_traj.shape[0] > 0:
+            all_data.append(smooth_traj)
+        if fitted_traj is not None and fitted_traj.shape[0] > 0:
+            all_data.append(fitted_traj)
+        
+        if all_data:
+            all_data = np.vstack(all_data)
+            x_min = np.floor(all_data[:, 0].min() / TILE_SIZE) * TILE_SIZE
+            x_max = np.ceil(all_data[:, 0].max() / TILE_SIZE) * TILE_SIZE
+            y_min = np.floor(all_data[:, 1].min() / TILE_SIZE) * TILE_SIZE
+            y_max = np.ceil(all_data[:, 1].max() / TILE_SIZE) * TILE_SIZE
+            
+            x_ticks = np.arange(x_min, x_max + TILE_SIZE, TILE_SIZE)
+            y_ticks = np.arange(y_min, y_max + TILE_SIZE, TILE_SIZE)
+            
+            ax.set_xticks(x_ticks)
+            ax.set_yticks(y_ticks)
+            ax.grid(True, linestyle='-', linewidth=0.5, alpha=0.3, zorder=0)
+
+        return fig, ax
+
+
 if __name__ == "__main__":
     # Initialize the node
     encoder_localization_node = EKFLocalizationNode(node_name="ekf_localization_node")
     # Keep it spinning
     rospy.spin()
+
