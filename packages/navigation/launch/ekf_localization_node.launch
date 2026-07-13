@@ -1,14 +1,16 @@
 <launch>
     <arg name="pkg_name" default="navigation" doc="name of the package"/>
-    <arg name="param_file_name" default="default" doc="Specify a param file. ex:megaman." />
+    <arg name="param_file_name" default="myduckiebot" doc="Specify a param file. ex:megaman." />
     <arg name="node_name" default="ekf_localization_node" doc="name of the node"/>
     <arg name="veh" doc="Name of vehicle. ex: megaman"/>
+    <!-- Real robot (roboduck) uses map_real.yaml; simulation (myduckiebot) uses map.yaml -->
+    <arg name="map_file_name" default="$(eval 'map_real' if arg('veh') == 'roboduck' else 'map')"/>
 
     <group ns="$(arg veh)">
         <node pkg="$(arg pkg_name)" type="$(arg node_name).py" name="$(arg node_name)" output="screen"
               required="true">
-              <rosparam command="load" file="$(find navigation)/config/ekf_localization_node/$(arg param_file_name).yaml"/>
-              <rosparam command="load" file="$(find navigation)include/navigation/map.yaml"/>
+              <rosparam command="load" file="$(find navigation)/config/ekf_localization_node/$(arg veh).yaml"/>
+              <rosparam command="load" file="$(find navigation)/include/navigation/$(arg map_file_name).yaml"/>
         </node>
     </group>
 </launch>

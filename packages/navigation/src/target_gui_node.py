@@ -64,6 +64,14 @@ class TargetGUINode(object):
             f"/{self.veh}/graph_planner_node/debug_go",
             BoolStamped, queue_size=1)
 
+        # Ground-truth localization toggle — only meaningful in simulation
+        # (myduckiebot). The real robot (roboduck) has no ground-truth source.
+        self.gt_available = (self.veh == "myduckiebot")
+        self.use_ground_truth = False
+        self.pub_use_gt = rospy.Publisher(
+            f"/{self.veh}/graph_planner_node/use_ground_truth",
+            BoolStamped, queue_size=1, latch=True)
+
         # Live "arrived" feedback from the planner (latched topic).
         rospy.Subscriber(
             f"/{self.veh}/graph_planner_node/arrived_at_target",
@@ -141,10 +149,17 @@ class TargetGUINode(object):
 
         pad = dict(padx=14, pady=8)
 
+        r = 0
         self._build_switch(self.root).grid(
-            row=0, column=0, columnspan=2, sticky="w", **pad)
+            row=r, column=0, columnspan=2, sticky="w", **pad)
+        r += 1
+        if self.gt_available:
+            self._build_gt_switch(self.root).grid(
+                row=r, column=0, columnspan=2, sticky="w", **pad)
+            r += 1
         self._build_debug_switch(self.root).grid(
-            row=1, column=0, columnspan=2, sticky="w", **pad)
+            row=r, column=0, columnspan=2, sticky="w", **pad)
+        r += 1
 
         # Manual intersection GO — only visible while planner debug is on.
         self.int_go_btn = tk.Button(self.root, text="▶ Intersection GO",
@@ -155,13 +170,15 @@ class TargetGUINode(object):
                                     font=("DejaVu Sans", 12, "bold"),
                                     relief="flat", bd=0, padx=10, pady=6,
                                     cursor="hand2")
-        self.int_go_btn.grid(row=2, column=0, columnspan=2, sticky="ew", **pad)
+        self.int_go_btn.grid(row=r, column=0, columnspan=2, sticky="ew", **pad)
         self.int_go_btn.grid_remove()
+        r += 1
 
         tk.Label(self.root, text="Target location:",
                  bg=self.DUCK_YELLOW, fg=self.DARK,
                  font=("DejaVu Sans", 12, "bold")).grid(
-                     row=3, column=0, columnspan=2, sticky="w", **pad)
+                     row=r, column=0, columnspan=2, sticky="w", **pad)
+        r += 1
 
         self.target_var = tk.StringVar()
         if self.targets:
@@ -198,7 +215,8 @@ class TargetGUINode(object):
                                   values=self.targets, width=22,
                                   style="Duck.TCombobox",
                                   font=("DejaVu Sans", 11))
-        self.combo.grid(row=4, column=0, columnspan=2, sticky="ew", **pad)
+        self.combo.grid(row=r, column=0, columnspan=2, sticky="ew", **pad)
+        r += 1
         self.combo.bind("<Return>", lambda _e: self._send())
 
         self.go_btn = tk.Button(self.root, text="GO", command=self._send,
@@ -208,7 +226,8 @@ class TargetGUINode(object):
                                 font=("DejaVu Sans", 13, "bold"),
                                 relief="flat", bd=0, padx=10, pady=8,
                                 cursor="hand2")
-        self.go_btn.grid(row=5, column=0, columnspan=2, sticky="ew", **pad)
+        self.go_btn.grid(row=r, column=0, columnspan=2, sticky="ew", **pad)
+        r += 1
 
         initial = (f"Service: {self.srv_name}" if self.targets
                    else "No label map found — type a label or node ID.")
@@ -217,7 +236,7 @@ class TargetGUINode(object):
                                    bg=self.DUCK_YELLOW, fg=self.DARK,
                                    wraplength=310, justify="left",
                                    font=("DejaVu Sans", 9))
-        self.status_lbl.grid(row=6, column=0, columnspan=2, sticky="w", **pad)
+        self.status_lbl.grid(row=r, column=0, columnspan=2, sticky="w", **pad)
 
         self.root.columnconfigure(0, weight=1)
         self.root.columnconfigure(1, weight=1)
@@ -288,6 +307,33 @@ class TargetGUINode(object):
         self._set_status("Requested IDLE (autonomous) — select a target."
                          if go_autonomous
                          else "Requested joystick control.", "blue")
+
+    def _build_gt_switch(self, parent):
+        frame = tk.Frame(parent, bg=self.DUCK_YELLOW)
+        tk.Label(frame, text="Ground truth:", bg=self.DUCK_YELLOW, fg=self.DARK,
+                 font=("DejaVu Sans", 12, "bold")).pack(side="left")
+        self.gt_canvas = tk.Canvas(frame, width=self._sw_w, height=self._sw_h,
+                                   bg=self.DUCK_YELLOW, highlightthickness=0,
+                                   cursor="hand2")
+        self.gt_canvas.pack(side="left", padx=(8, 8))
+        self.gt_canvas.bind("<Button-1>", lambda _e: self._toggle_gt())
+        self.gt_text = tk.Label(frame, text="EKF", bg=self.DUCK_YELLOW,
+                                fg=self.DARK, font=("DejaVu Sans", 10))
+        self.gt_text.pack(side="left")
+        self._draw_pill(self.gt_canvas, self.use_ground_truth)
+        return frame
+
+    def _toggle_gt(self):
+        # Switch the planner's localization source: EKF estimate <-> ground truth.
+        self.use_ground_truth = not self.use_ground_truth
+        msg = BoolStamped()
+        msg.header.stamp = rospy.Time.now()
+        msg.data = self.use_ground_truth
+        self.pub_use_gt.publish(msg)
+        self._draw_pill(self.gt_canvas, self.use_ground_truth)
+        self.gt_text.config(text="GT" if self.use_ground_truth else "EKF")
+        self._set_status("Localization: GROUND TRUTH." if self.use_ground_truth
+                         else "Localization: EKF estimate.", "blue")
 
     def _toggle_debug(self):
         # Locally driven (this GUI owns the planner-debug state).

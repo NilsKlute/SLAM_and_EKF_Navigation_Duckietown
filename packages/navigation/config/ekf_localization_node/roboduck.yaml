@@ -1,0 +1,21 @@
+no_predict: False
+no_update: False
+
+test_sim: False
+
+# this is the initial pose of the duckiebot in the Duckiematrix
+# For real robot experiment you may need to update
+x_0: 0.41
+y_0: 0.61
+theta_0: 1.57
+
+P_0_xx: 0.1
+P_0_yy: 0.1
+P_0_tt: 0.01
+
+Q_dX: 0.000015     #  0.00003
+Q_dT: 0.0002 #0.0004
+
+R_rr: 0.005
+R_tt: 0.001
+

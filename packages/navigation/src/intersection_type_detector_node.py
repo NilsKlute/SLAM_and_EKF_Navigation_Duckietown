@@ -35,6 +35,8 @@ class IntersectionTypeDetectorNode(DTROS):
         self._top_cutoff = rospy.get_param("~top_cutoff", None)
         self._colors = DTParam("~colors", None)
 
+
+        # ------ Threshold Values for red colors -----  
         self.lower_red1 = np.array([0, 70, 50])
         self.upper_red1 = np.array([10, 255, 255])
         self.lower_red2 = np.array([170, 70, 50])

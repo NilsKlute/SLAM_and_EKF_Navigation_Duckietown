@@ -7,7 +7,10 @@ use_cached: false
 data_dir: "/data/graph_planner"
 
 # Directional command — pure decision geometry, independent of the graph
-turn_angle_threshold_deg: 35.0
+turn_angle_threshold_deg: 13
 
 # A* planner — pure decision geometry, independent of the graph
 u_turn_thresh_deg: 120.0
+
+# Max angle difference of orientations of current and target nodes
+arrival_max_angle_diff: 90

@@ -35,7 +35,7 @@ class RandomAprilTagTurnsNode(DTROS):
 
 
         if self.turn_type == -1:
-            rospy.loginfo_throttle(5, f"[{self.node_name}] We havn't received the planners decision yet")
+            rospy.loginfo_throttle(20, f"[{self.node_name}] We havn't received the planners decision yet")
             return
         
         avail_turns = avail_turns_msg.data

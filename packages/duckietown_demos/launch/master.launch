@@ -457,7 +457,7 @@
     <group if="$(arg graph_planner)">
         <remap from="graph_planner_node/target_location" to="target_selection_node/target_location"/>
         <remap from="graph_planner_node/at_stop_line" to="stop_line_filter_node/at_stop_line"/>
-        <remap from="graph_planner_node/intersection_go" to="unicorn_intersection_node/intersection_go"/>
+        <remap from="graph_planner_node/intersection_done" to="intersection_navigation_node/intersection_done"/>
         <include file="$(find navigation)/launch/graph_planner_node.launch">
             <arg name="veh"              value="$(arg veh)"/>
             <arg name="param_file_name"  value="$(arg param_file_name)"/>
