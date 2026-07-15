@@ -85,11 +85,16 @@ class TargetGUINode(object):
             f"/{self.veh}/graph_planner_node/arrived_at_target",
             BoolStamped, self._cb_arrived, queue_size=1)
 
-        self._img_photo     = None  # keep PIL references to prevent GC
-        self._seg_photo     = None
-        self._cluster_photo = None
-        self._img_pil_raw   = None  # raw (unscaled) graph planner image
-        self._resize_job    = None  # debounce handle for canvas <Configure>
+        self._img_photo        = None
+        self._seg_photo        = None
+        self._cluster_photo    = None
+        self._street_photo     = None
+
+        self._img_pil_raw      = None
+        self._street_pil_raw   = None
+
+        self._resize_job       = None
+        self._street_resize_job = None
 
         self._build_ui()
 
@@ -109,6 +114,9 @@ class TargetGUINode(object):
             rospy.Subscriber(
                 f"/{self.veh}/intersection_type_detector_node/debug/clusters/compressed",
                 CompressedImage, self._cb_clusters_image, queue_size=1)
+            rospy.Subscriber(
+                f"/{self.veh}/ekf_localization_node/street_graph_plot/compressed",
+                CompressedImage, self._cb_street_graph_image, queue_size=1)
         else:
             rospy.logwarn("[target_gui] Pillow not installed — debug image panels disabled")
 
@@ -171,7 +179,8 @@ class TargetGUINode(object):
     def _build_ui(self):
         self.root = tk.Tk()
         self.root.title(f"Target Selection — {self.veh}")
-        self.root.minsize(340, 300)
+        self.root.geometry("1800x1400")
+        self.root.minsize(1200, 900)
         self.root.configure(bg=self.DUCK_YELLOW)
 
         pad = dict(padx=14, pady=8)
@@ -285,6 +294,39 @@ class TargetGUINode(object):
                                      bg=self.DARK, highlightthickness=0)
         self._img_canvas.pack(fill="both", expand=True)
         self._img_canvas.bind("<Configure>", self._on_img_canvas_resize)
+
+        # ---- Street graph visualization ----
+
+        street_frame = tk.Frame(self.root, bg=self.DUCK_YELLOW)
+        street_frame.grid(row=r, column=0, columnspan=2,
+                        padx=14, pady=(10,10),
+                        sticky="nsew")
+        self.root.rowconfigure(r, weight=1)
+        tk.Label(
+            street_frame,
+            text="EKF Street Graph:",
+            bg=self.DUCK_YELLOW,
+            fg=self.DARK,
+            font=("DejaVu Sans", 10, "bold")
+        ).pack(anchor="w")
+
+        self._street_canvas = tk.Canvas(
+            street_frame,
+            width=600,
+            height=600,
+            bg=self.DARK,
+            highlightthickness=0
+        )
+
+        self._street_canvas.pack(fill="both", expand=True)
+
+        self._street_canvas.bind(
+            "<Configure>",
+            self._on_street_canvas_resize
+        )
+
+        r += 1
+
         if not _PIL_AVAILABLE:
             self._img_canvas.create_text(280, 280,
                                          text="Install Pillow to see the\nplanner debug image",
@@ -565,6 +607,67 @@ class TargetGUINode(object):
     def run(self):
         self.root.mainloop()
 
+    def _cb_street_graph_image(self, msg):
+        try:
+            img = Image.open(io.BytesIO(bytes(msg.data)))
+            img.load()   # force decoding
 
+            self._street_pil_raw = img.copy()
+
+            rospy.loginfo_throttle(
+                2.0,
+                "[target_gui] received street graph image"
+            )
+
+            self.root.after(
+                0,
+                self._redraw_street_canvas
+            )
+
+        except Exception as e:
+            rospy.logwarn_throttle(
+                10.0,
+                f"[target_gui] Street graph decode failed: {e}"
+            )
+
+    def _on_street_canvas_resize(self, _event):
+        if self._street_resize_job is not None:
+            self.root.after_cancel(self._street_resize_job)
+
+        self._street_resize_job = self.root.after(
+            100,
+            self._redraw_street_canvas
+        )
+    def _redraw_street_canvas(self):
+        self._street_resize_job = None
+
+        if self._street_pil_raw is None:
+            return
+
+        w = self._street_canvas.winfo_width()
+        h = self._street_canvas.winfo_height()
+
+        if w < 2 or h < 2:
+            return
+
+        img = self._street_pil_raw.copy()
+
+        img.thumbnail(
+            (w, h),
+            Image.LANCZOS
+        )
+
+        photo = ImageTk.PhotoImage(img)
+
+        self._street_photo = photo
+
+        self._street_canvas.delete("all")
+
+        self._street_canvas.create_image(
+            w // 2,
+            h // 2,
+            anchor="center",
+            image=photo
+        )
 if __name__ == "__main__":
     TargetGUINode().run()

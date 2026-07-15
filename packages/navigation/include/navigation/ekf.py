@@ -99,7 +99,7 @@ class EKF:
         Extended RTS smoother backward pass. Returns an (N,3) array of
         smoothed [x, y, theta], oldest to newest, over the stored history.
         """
-        print("rts_smooth")
+        #print("rts_smooth")
         with self.q_mutex:
             n = len(self.history)
             if n == 0:
