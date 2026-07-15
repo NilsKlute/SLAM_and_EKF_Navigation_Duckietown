@@ -227,6 +227,7 @@ class LaneControllerNode(DTROS):
         if self.last_s is not None:
             dt = current_s - self.last_s
 
+        d_err = phi_err = 0.0
         if self.at_stop_line or self.at_obstacle_stop_line:
             v = 0
             omega = 0
@@ -270,6 +271,23 @@ class LaneControllerNode(DTROS):
 
         self.publishCmd(car_control_msg)
         self.last_s = current_s
+
+        if self.params["~verbose"] >= 1:
+            P_d   = self.params["~k_d"].value     * d_err
+            P_phi = self.params["~k_theta"].value  * phi_err
+            I_d   = self.params["~k_Id"].value     * self.controller.d_I
+            I_phi = self.params["~k_Iphi"].value   * self.controller.phi_I
+            D_d   = self.params["~k_Dd"].value     * self.controller.d_D_filt
+            D_phi = self.params["~k_Dphi"].value   * self.controller.phi_D_filt
+            stopped = "STOPPED " if (self.at_stop_line or self.at_obstacle_stop_line) else ""
+            rospy.loginfo_throttle(0.5,
+                f"\n[PID] {stopped}dt={dt:.3f}s\n"
+                f"  errors : d={d_err:+.4f}m   phi={phi_err:+.4f}rad\n"
+                f"  P      : d={P_d:+.4f}      phi={P_phi:+.4f}\n"
+                f"  I      : d={I_d:+.4f}      phi={I_phi:+.4f}   (accum d={self.controller.d_I:+.4f} phi={self.controller.phi_I:+.4f})\n"
+                f"  D      : d={D_d:+.4f}      phi={D_phi:+.4f}\n"
+                f"  output : v={v:.3f}m/s   omega={omega:+.4f}rad/s"
+            )
 
     def cbParametersChanged(self):
         """Updates parameters in the controller object."""

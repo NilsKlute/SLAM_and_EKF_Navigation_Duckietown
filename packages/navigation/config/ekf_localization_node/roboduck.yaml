@@ -1,0 +1,32 @@
+# Set no_update: True to run EKF in predict-only (odometry) mode.
+# Useful for comparing wheel-odometry drift against the dead-reckoning node
+# overlay shown in the graph planner debug image — both will diverge from the
+# graph purely from wheel slip / parameter mismatch, with no AprilTag correction.
+no_predict: False
+no_update: False
+
+test_sim: False
+
+# this is the initial pose of the duckiebot in the Duckiematrix
+# For real robot experiment you may need to update
+x_0: 0.41
+y_0: 0.61
+theta_0: 1.57
+
+P_0_xx: 0.1
+P_0_yy: 0.1
+P_0_tt: 0.01
+
+# Wheel kinematics — must match the physical robot.
+# wheel_baseline should match deadreckoning_node's wheelbase param for consistent odometry.
+wheel_radius:   0.033
+wheel_baseline: 0.1
+
+Q_dX: 0.000015     #  0.00003
+Q_dT: 0.0002 #0.0004
+
+R_rr: 0.0005
+R_tt: 0.00015
+
+verbose: 0
+

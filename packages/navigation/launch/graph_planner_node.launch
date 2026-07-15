@@ -1,24 +1,33 @@
 <launch>
-    <arg name="veh" doc="Name of vehicle. ex: megaman"/>
-    <arg name="param_file_name" default="default" doc="Specify a param file. ex:megaman."/>
+    <arg name="veh" doc="Name of vehicle. ex: roboduck"/>
     <arg name="localization_type" default="EKF"/>
     <arg name="label_map_file"    default=""/>
+    <!-- AprilTag map for the debug overlay: real robot (roboduck) -> map_real.yaml,
+         simulation (myduckiebot) -> map.yaml. Must match the EKF's map. -->
+    <arg name="map_file_name" default="$(eval 'map_real' if arg('veh') == 'roboduck' else 'map')"/>
 
     <arg name="pkg_name" value="navigation"/>
     <arg name="node_name" value="graph_planner_node"/>
 
     <group ns="$(arg veh)">
         <node name="$(arg node_name)" pkg="$(arg pkg_name)" type="$(arg node_name).py" output="screen" required="true">
-            <rosparam command="load" file="$(find navigation)/config/$(arg node_name)/$(arg param_file_name).yaml"/>
+            <!-- Layer 1: universal constants (use_cached, data_dir) -->
+            <rosparam command="load" file="$(find navigation)/config/$(arg node_name)/default.yaml"/>
+            <!-- Layer 2: graph algorithm + vehicle-specific (edge/cluster/candidate params) -->
             <rosparam if="$(eval arg('localization_type') == 'EKF')" command="load"
-                      file="$(find navigation)/config/$(arg node_name)/graph_ekf.yaml"/>
+                      file="$(find navigation)/config/$(arg node_name)/graph_ekf_$(arg veh).yaml"/>
             <rosparam unless="$(eval arg('localization_type') == 'EKF')" command="load"
-                      file="$(find navigation)/config/$(arg node_name)/graph_slam.yaml"/>
+                      file="$(find navigation)/config/$(arg node_name)/graph_slam_$(arg veh).yaml"/>
+            <!-- Layer 3: vehicle-level overrides (turn threshold, arrival params) -->
+            <rosparam command="load" file="$(find navigation)/config/$(arg node_name)/$(arg veh).yaml"/>
             <param name="veh"              value="$(arg veh)"/>
             <param name="localization_type" value="$(arg localization_type)"/>
-            <param name="graph_file_ekf"   value="$(find navigation)/config/graph_planner_node/ekf_loop.txt"/>
-            <param name="graph_file_slam"  value="$(find navigation)/config/graph_planner_node/manual_SLAM_loop.g2o"/>
+            <param name="graph_file_ekf_myduckiebot"  value="$(find navigation)/config/graph_planner_node/ekf_loop_myduckiebot.txt"/>
+            <param name="graph_file_slam_myduckiebot" value="$(find navigation)/config/graph_planner_node/manual_SLAM_loop_myduckiebot.g2o"/>
+            <param name="graph_file_ekf_roboduck"     value="$(find navigation)/config/graph_planner_node/ekf_loop_roboduck.txt"/>
+            <param name="graph_file_slam_roboduck"    value="$(find navigation)/config/graph_planner_node/manual_SLAM_loop_roboduck.g2o"/>
             <param name="label_map_file"   value="$(arg label_map_file)"/>
+            <param name="apriltag_map_file" value="$(find navigation)/include/navigation/$(arg map_file_name).yaml"/>
         </node>
     </group>
 </launch>

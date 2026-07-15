@@ -83,6 +83,7 @@ class LineDetectorNode(DTROS):
 
         self.srv = rospy.Service('save_image', Empty, self.save_image_cb)
         self.img_n = 0
+        self._last_debug_msg = None
 
         # Publishers
         self.pub_lines = rospy.Publisher(
@@ -91,6 +92,7 @@ class LineDetectorNode(DTROS):
         self.pub_d_segments = rospy.Publisher(
             "~debug/segments/compressed", CompressedImage, queue_size=1, dt_topic_type=TopicType.DEBUG
         )
+        rospy.Timer(rospy.Duration(0.1), self._debug_segments_timer)
         self.pub_d_edges = rospy.Publisher(
             "~debug/edges/compressed", CompressedImage, queue_size=1, dt_topic_type=TopicType.DEBUG
         )
@@ -278,22 +280,20 @@ class LineDetectorNode(DTROS):
             # Just rename appropriately the image variable
             image = gpu_image
 
-        # If there are any subscribers to the debug topics, generate a debug image and publish it
-        if self.pub_d_segments.get_num_connections() > 0:
-            debug_img = draw_segments(image,
-                                      {
-                                        self.color_ranges["YELLOW"]: color_detections[0],
-                                        self.color_ranges["WHITE"]: color_detections[1],
-                                        self.color_ranges["RED"]: color_detections[2]
-                                      }
-                                    )
-
-            # mirror the image if left-hand traffic mode is set
-            if self._traffic_mode.value == "LHT":
-                debug_img = np.fliplr(debug_img)
-            debug_image_msg = self.bridge.cv2_to_compressed_imgmsg(debug_img)
-            debug_image_msg.header = image_msg.header
-            self.pub_d_segments.publish(debug_image_msg)
+        # Always compute and cache the segment debug image so the timer can
+        # publish it regardless of FSM switch state.
+        debug_img = draw_segments(image,
+                                  {
+                                    self.color_ranges["YELLOW"]: color_detections[0],
+                                    self.color_ranges["WHITE"]: color_detections[1],
+                                    self.color_ranges["RED"]: color_detections[2]
+                                  }
+                                )
+        if self._traffic_mode.value == "LHT":
+            debug_img = np.fliplr(debug_img)
+        debug_image_msg = self.bridge.cv2_to_compressed_imgmsg(debug_img)
+        debug_image_msg.header = image_msg.header
+        self._last_debug_msg = debug_image_msg
 
         if self.pub_d_edges.get_num_connections() > 0:
             canny_edges = self.detector.find_edges(image,
@@ -324,6 +324,15 @@ class LineDetectorNode(DTROS):
             debug_image_msg.header = image_msg.header
             self.pub_d_maps.publish(debug_image_msg)
 
+
+    def _debug_segments_timer(self, _event):
+        if self._last_debug_msg is None:
+            return
+        try:
+            self.pub_d_segments.active = True
+        except AttributeError:
+            pass
+        self.pub_d_segments.publish(self._last_debug_msg)
 
     @staticmethod
     def _to_segment_msg(lines, normals, color):

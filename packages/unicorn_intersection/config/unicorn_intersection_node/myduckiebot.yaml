@@ -1,0 +1,31 @@
+use_stop_pose: False
+num_waypoints: 4
+visualization: True
+speed: 0.12
+
+canonical_goal_pose_right: {
+  x: 0.3,
+  y: -0.3,
+  theta: -1.57,
+}
+
+canonical_goal_pose_left: {
+  x: 0.25,
+  y: 0.45,
+  theta: 1.57,
+}
+
+canonical_goal_pose_straight: {
+  x: 0.4,
+  y: 0.0,
+  theta: 0.0,
+}
+
+# Hardcoded dead-reckoning intersection turns — tuned for myduckiebot (sim)
+hc_speed: 0.25
+hc_omega_left: 0.75
+hc_omega_straight: 0.0
+hc_omega_right: -1.7
+hc_duration_left: 4.0
+hc_duration_straight: 4.0
+hc_duration_right: 1.6

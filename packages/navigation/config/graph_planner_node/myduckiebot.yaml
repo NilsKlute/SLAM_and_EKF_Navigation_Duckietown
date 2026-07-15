@@ -1,0 +1,6 @@
+# Myduckiebot (simulation) vehicle-specific graph planner params.
+# Loaded last — overrides anything from default.yaml and the graph file.
+
+turn_angle_threshold_deg: 13
+u_turn_thresh_deg: 120.0
+arrival_max_angle_diff: 90

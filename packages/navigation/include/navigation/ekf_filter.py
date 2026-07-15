@@ -48,7 +48,7 @@ class EKF:
             r = np.sqrt(dx**2 + dy**2)
 
             if r < 1e-6:
-                return
+                return None, None
 
             z_pred = np.array([r, wrap_angle(np.arctan2(dy, dx) - theta)])
 
@@ -61,10 +61,13 @@ class EKF:
             ])
 
             S = H @ self.P @ H.T + self.R
-            K = self.P @ H.T @ np.linalg.inv(S)
+            S_inv = np.linalg.inv(S)
+            K = self.P @ H.T @ S_inv
 
             self.q = self.q + K @ y_innov
             self.q[2] = wrap_angle(self.q[2])
 
             I_KH = np.eye(3) - K @ H
             self.P = I_KH @ self.P @ I_KH.T + K @ self.R @ K.T
+
+            return y_innov, S

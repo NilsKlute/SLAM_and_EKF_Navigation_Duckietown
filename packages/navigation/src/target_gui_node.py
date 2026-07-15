@@ -10,6 +10,7 @@ The dropdown is populated from the graph_planner label map (same labels you
 would pass to the service). The field is editable, so you can also type a raw
 label or node id that is not in the map.
 """
+import io
 import os
 import threading
 import tkinter as tk
@@ -19,6 +20,13 @@ import yaml
 import rospy
 from duckietown_msgs.srv import SetFSMState
 from duckietown_msgs.msg import BoolStamped, FSMState
+from sensor_msgs.msg import CompressedImage
+
+try:
+    from PIL import Image, ImageTk
+    _PIL_AVAILABLE = True
+except ImportError:
+    _PIL_AVAILABLE = False
 
 
 class TargetGUINode(object):
@@ -64,10 +72,24 @@ class TargetGUINode(object):
             f"/{self.veh}/graph_planner_node/debug_go",
             BoolStamped, queue_size=1)
 
+        # Ground-truth localization toggle — only meaningful in simulation
+        # (myduckiebot). The real robot (roboduck) has no ground-truth source.
+        self.gt_available = (self.veh == "myduckiebot")
+        self.use_ground_truth = False
+        self.pub_use_gt = rospy.Publisher(
+            f"/{self.veh}/graph_planner_node/use_ground_truth",
+            BoolStamped, queue_size=1, latch=True)
+
         # Live "arrived" feedback from the planner (latched topic).
         rospy.Subscriber(
             f"/{self.veh}/graph_planner_node/arrived_at_target",
             BoolStamped, self._cb_arrived, queue_size=1)
+
+        self._img_photo     = None  # keep PIL references to prevent GC
+        self._seg_photo     = None
+        self._cluster_photo = None
+        self._img_pil_raw   = None  # raw (unscaled) graph planner image
+        self._resize_job    = None  # debounce handle for canvas <Configure>
 
         self._build_ui()
 
@@ -76,6 +98,19 @@ class TargetGUINode(object):
         rospy.Subscriber(
             f"/{self.veh}/fsm_node/mode",
             FSMState, self._cb_fsm_state, queue_size=1)
+
+        if _PIL_AVAILABLE:
+            rospy.Subscriber(
+                f"/{self.veh}/graph_planner_node/debug_image/compressed",
+                CompressedImage, self._cb_debug_image, queue_size=1)
+            rospy.Subscriber(
+                f"/{self.veh}/line_detector_node/debug/segments/compressed",
+                CompressedImage, self._cb_segments_image, queue_size=1)
+            rospy.Subscriber(
+                f"/{self.veh}/intersection_type_detector_node/debug/clusters/compressed",
+                CompressedImage, self._cb_clusters_image, queue_size=1)
+        else:
+            rospy.logwarn("[target_gui] Pillow not installed — debug image panels disabled")
 
     # ---- target list ----
 
@@ -141,10 +176,17 @@ class TargetGUINode(object):
 
         pad = dict(padx=14, pady=8)
 
+        r = 0
         self._build_switch(self.root).grid(
-            row=0, column=0, columnspan=2, sticky="w", **pad)
+            row=r, column=0, columnspan=2, sticky="w", **pad)
+        r += 1
+        if self.gt_available:
+            self._build_gt_switch(self.root).grid(
+                row=r, column=0, columnspan=2, sticky="w", **pad)
+            r += 1
         self._build_debug_switch(self.root).grid(
-            row=1, column=0, columnspan=2, sticky="w", **pad)
+            row=r, column=0, columnspan=2, sticky="w", **pad)
+        r += 1
 
         # Manual intersection GO — only visible while planner debug is on.
         self.int_go_btn = tk.Button(self.root, text="▶ Intersection GO",
@@ -155,13 +197,15 @@ class TargetGUINode(object):
                                     font=("DejaVu Sans", 12, "bold"),
                                     relief="flat", bd=0, padx=10, pady=6,
                                     cursor="hand2")
-        self.int_go_btn.grid(row=2, column=0, columnspan=2, sticky="ew", **pad)
+        self.int_go_btn.grid(row=r, column=0, columnspan=2, sticky="ew", **pad)
         self.int_go_btn.grid_remove()
+        r += 1
 
         tk.Label(self.root, text="Target location:",
                  bg=self.DUCK_YELLOW, fg=self.DARK,
                  font=("DejaVu Sans", 12, "bold")).grid(
-                     row=3, column=0, columnspan=2, sticky="w", **pad)
+                     row=r, column=0, columnspan=2, sticky="w", **pad)
+        r += 1
 
         self.target_var = tk.StringVar()
         if self.targets:
@@ -198,7 +242,8 @@ class TargetGUINode(object):
                                   values=self.targets, width=22,
                                   style="Duck.TCombobox",
                                   font=("DejaVu Sans", 11))
-        self.combo.grid(row=4, column=0, columnspan=2, sticky="ew", **pad)
+        self.combo.grid(row=r, column=0, columnspan=2, sticky="ew", **pad)
+        r += 1
         self.combo.bind("<Return>", lambda _e: self._send())
 
         self.go_btn = tk.Button(self.root, text="GO", command=self._send,
@@ -208,7 +253,8 @@ class TargetGUINode(object):
                                 font=("DejaVu Sans", 13, "bold"),
                                 relief="flat", bd=0, padx=10, pady=8,
                                 cursor="hand2")
-        self.go_btn.grid(row=5, column=0, columnspan=2, sticky="ew", **pad)
+        self.go_btn.grid(row=r, column=0, columnspan=2, sticky="ew", **pad)
+        r += 1
 
         initial = (f"Service: {self.srv_name}" if self.targets
                    else "No label map found — type a label or node ID.")
@@ -217,7 +263,62 @@ class TargetGUINode(object):
                                    bg=self.DUCK_YELLOW, fg=self.DARK,
                                    wraplength=310, justify="left",
                                    font=("DejaVu Sans", 9))
-        self.status_lbl.grid(row=6, column=0, columnspan=2, sticky="w", **pad)
+        self.status_lbl.grid(row=r, column=0, columnspan=2, sticky="w", **pad)
+        r += 1
+
+        # Debug images: graph planner on the left, segments + clusters stacked on the right.
+        # The graph canvas fills and scales with the window; right panel stays fixed width.
+        debug_frame = tk.Frame(self.root, bg=self.DUCK_YELLOW)
+        debug_frame.grid(row=r, column=0, columnspan=2, padx=14, pady=(4, 4), sticky="nsew")
+        self.root.rowconfigure(r, weight=1)
+        r += 1
+
+        # ---- Left column: graph planner (expands with window) ----
+        left_panel = tk.Frame(debug_frame, bg=self.DUCK_YELLOW)
+        left_panel.pack(side="left", anchor="n", padx=(0, 12), fill="both", expand=True)
+
+        tk.Label(left_panel, text="Graph planner:",
+                 bg=self.DUCK_YELLOW, fg=self.DARK,
+                 font=("DejaVu Sans", 10, "bold")).pack(anchor="w", pady=(0, 2))
+
+        self._img_canvas = tk.Canvas(left_panel, width=560, height=560,
+                                     bg=self.DARK, highlightthickness=0)
+        self._img_canvas.pack(fill="both", expand=True)
+        self._img_canvas.bind("<Configure>", self._on_img_canvas_resize)
+        if not _PIL_AVAILABLE:
+            self._img_canvas.create_text(280, 280,
+                                         text="Install Pillow to see the\nplanner debug image",
+                                         fill="#AAAAAA", font=("DejaVu Sans", 10), justify="center")
+
+        # ---- Right column: segments (top) + clusters (bottom) ----
+        right_panel = tk.Frame(debug_frame, bg=self.DUCK_YELLOW)
+        right_panel.pack(side="left", anchor="n")
+
+        tk.Label(right_panel, text="Line detector segments:",
+                 bg=self.DUCK_YELLOW, fg=self.DARK,
+                 font=("DejaVu Sans", 10, "bold")).pack(anchor="w", pady=(0, 2))
+
+        SEG_W, SEG_H = 560, 420
+        self._seg_canvas = tk.Canvas(right_panel, width=SEG_W, height=SEG_H,
+                                     bg=self.DARK, highlightthickness=0)
+        self._seg_canvas.pack(pady=(0, 10))
+        if not _PIL_AVAILABLE:
+            self._seg_canvas.create_text(SEG_W // 2, SEG_H // 2,
+                                         text="Install Pillow to see the\nsegment debug image",
+                                         fill="#AAAAAA", font=("DejaVu Sans", 10), justify="center")
+
+        tk.Label(right_panel, text="Intersection type detector (red clusters):",
+                 bg=self.DUCK_YELLOW, fg=self.DARK,
+                 font=("DejaVu Sans", 10, "bold")).pack(anchor="w", pady=(0, 2))
+
+        CLUSTER_W, CLUSTER_H = 560, 120
+        self._cluster_canvas = tk.Canvas(right_panel, width=CLUSTER_W, height=CLUSTER_H,
+                                         bg=self.DARK, highlightthickness=0)
+        self._cluster_canvas.pack()
+        if not _PIL_AVAILABLE:
+            self._cluster_canvas.create_text(CLUSTER_W // 2, CLUSTER_H // 2,
+                                             text="Install Pillow to see the\ncluster debug image",
+                                             fill="#AAAAAA", font=("DejaVu Sans", 10), justify="center")
 
         self.root.columnconfigure(0, weight=1)
         self.root.columnconfigure(1, weight=1)
@@ -288,6 +389,33 @@ class TargetGUINode(object):
         self._set_status("Requested IDLE (autonomous) — select a target."
                          if go_autonomous
                          else "Requested joystick control.", "blue")
+
+    def _build_gt_switch(self, parent):
+        frame = tk.Frame(parent, bg=self.DUCK_YELLOW)
+        tk.Label(frame, text="Ground truth:", bg=self.DUCK_YELLOW, fg=self.DARK,
+                 font=("DejaVu Sans", 12, "bold")).pack(side="left")
+        self.gt_canvas = tk.Canvas(frame, width=self._sw_w, height=self._sw_h,
+                                   bg=self.DUCK_YELLOW, highlightthickness=0,
+                                   cursor="hand2")
+        self.gt_canvas.pack(side="left", padx=(8, 8))
+        self.gt_canvas.bind("<Button-1>", lambda _e: self._toggle_gt())
+        self.gt_text = tk.Label(frame, text="EKF", bg=self.DUCK_YELLOW,
+                                fg=self.DARK, font=("DejaVu Sans", 10))
+        self.gt_text.pack(side="left")
+        self._draw_pill(self.gt_canvas, self.use_ground_truth)
+        return frame
+
+    def _toggle_gt(self):
+        # Switch the planner's localization source: EKF estimate <-> ground truth.
+        self.use_ground_truth = not self.use_ground_truth
+        msg = BoolStamped()
+        msg.header.stamp = rospy.Time.now()
+        msg.data = self.use_ground_truth
+        self.pub_use_gt.publish(msg)
+        self._draw_pill(self.gt_canvas, self.use_ground_truth)
+        self.gt_text.config(text="GT" if self.use_ground_truth else "EKF")
+        self._set_status("Localization: GROUND TRUTH." if self.use_ground_truth
+                         else "Localization: EKF estimate.", "blue")
 
     def _toggle_debug(self):
         # Locally driven (this GUI owns the planner-debug state).
@@ -360,6 +488,67 @@ class TargetGUINode(object):
     def _cb_arrived(self, msg):
         if msg.data:
             self._set_status("Arrived at target!", "green")
+
+    def _cb_debug_image(self, msg):
+        try:
+            self._img_pil_raw = Image.open(io.BytesIO(bytes(msg.data)))
+            self.root.after(0, self._redraw_debug_canvas)
+        except Exception as e:
+            rospy.logwarn_throttle(10.0, f"[target_gui] Image decode failed: {e}")
+
+    def _on_img_canvas_resize(self, _event):
+        # Debounce: wait 100 ms after the last resize before redrawing.
+        if self._resize_job is not None:
+            self.root.after_cancel(self._resize_job)
+        self._resize_job = self.root.after(100, self._redraw_debug_canvas)
+
+    def _redraw_debug_canvas(self):
+        self._resize_job = None
+        if self._img_pil_raw is None:
+            return
+        w = self._img_canvas.winfo_width()
+        h = self._img_canvas.winfo_height()
+        if w < 2 or h < 2:
+            return
+        img = self._img_pil_raw.copy()
+        img.thumbnail((w, h), Image.LANCZOS)
+        photo = ImageTk.PhotoImage(img)
+        self._img_photo = photo  # hold reference — GC would blank the canvas
+        self._img_canvas.delete("all")
+        self._img_canvas.create_image(w // 2, h // 2, anchor="center", image=photo)
+
+    def _cb_segments_image(self, msg):
+        try:
+            img = Image.open(io.BytesIO(bytes(msg.data)))
+            # always scale to fill the panel width (upscale small debug images)
+            scale = 560 / img.width
+            img = img.resize((560, int(img.height * scale)), Image.NEAREST)
+            photo = ImageTk.PhotoImage(img)
+            self.root.after(0, lambda p=photo: self._update_seg_canvas(p))
+        except Exception as e:
+            rospy.logwarn_throttle(10.0, f"[target_gui] Segment image decode failed: {e}")
+
+    def _update_seg_canvas(self, photo):
+        self._seg_photo = photo
+        self._seg_canvas.config(width=photo.width(), height=photo.height())
+        self._seg_canvas.delete("all")
+        self._seg_canvas.create_image(0, 0, anchor="nw", image=photo)
+
+    def _cb_clusters_image(self, msg):
+        try:
+            img = Image.open(io.BytesIO(bytes(msg.data)))
+            scale = 560 / img.width
+            img = img.resize((560, max(1, int(img.height * scale))), Image.NEAREST)
+            photo = ImageTk.PhotoImage(img)
+            self.root.after(0, lambda p=photo: self._update_cluster_canvas(p))
+        except Exception as e:
+            rospy.logwarn_throttle(10.0, f"[target_gui] Cluster image decode failed: {e}")
+
+    def _update_cluster_canvas(self, photo):
+        self._cluster_photo = photo
+        self._cluster_canvas.config(width=photo.width(), height=photo.height())
+        self._cluster_canvas.delete("all")
+        self._cluster_canvas.create_image(0, 0, anchor="nw", image=photo)
 
     # ---- lifecycle ----
 

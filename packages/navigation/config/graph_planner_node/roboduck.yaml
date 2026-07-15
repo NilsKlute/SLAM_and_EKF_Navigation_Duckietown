@@ -1,0 +1,12 @@
+# Roboduck (real robot) vehicle-specific graph planner params.
+# Loaded last — overrides anything from default.yaml and the graph file.
+
+# Intersection turn decision: angle from current heading to next-node vector beyond
+# which it counts as a left/right turn instead of straight.
+turn_angle_threshold_deg: 13
+
+# A* u-turn filter: paths that require reversing more than this are rejected.
+u_turn_thresh_deg: 120.0
+
+# Arrival check: max heading difference (deg) between robot and target node.
+arrival_max_angle_diff: 90

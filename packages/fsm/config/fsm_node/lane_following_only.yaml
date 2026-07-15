@@ -1,0 +1,41 @@
+initial_state: "NORMAL_JOYSTICK_CONTROL"
+
+events:
+  joystick_override_on:
+    topic: "joy_mapper_node/joystick_override"
+    msg_type: "BoolStamped"
+    trigger: True
+  joystick_override_off:
+    topic: "joy_mapper_node/joystick_override"
+    msg_type: "BoolStamped"
+    trigger: False
+
+nodes:
+  anti_instagram: "anti_instagram_node/switch"
+  led_emitter_node: "led_emitter_node/switch"
+  line_detector_node: "line_detector_node/switch"
+  lane_filter_node: "lane_filter_node/switch"
+  lane_controller_node: "lane_controller_node/switch"
+
+global_transitions:
+  joystick_override_on: "NORMAL_JOYSTICK_CONTROL"
+
+states:
+  NORMAL_JOYSTICK_CONTROL:
+    transitions:
+      joystick_override_off: "LANE_FOLLOWING"
+    active_nodes:
+      - anti_instagram
+      - line_detector_node
+      - lane_filter_node
+    lights: "GREEN"
+
+  LANE_FOLLOWING:
+    transitions: {}
+    active_nodes:
+      - anti_instagram
+      - line_detector_node
+      - lane_filter_node
+      - lane_controller_node
+      - ground_projection_node
+    lights: "RED"

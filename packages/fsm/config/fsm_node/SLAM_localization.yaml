@@ -82,6 +82,8 @@ states:
     active_nodes:
       - target_selection_node
       - graph_planner_node
+      - deadreckoning_node
+      - line_detector_node
     lights: "WHITE"
 
 
@@ -98,6 +100,7 @@ states:
       - stop_line_filter_node
       - unicorn_intersection_node
       - graph_planner_node
+      - deadreckoning_node
     lights: "RED"
 
   STOP_SIGN_INTERSECTION:
@@ -106,11 +109,13 @@ states:
       target_reached: "IDLE"
     active_nodes:
       - anti_instagram
+      - line_detector_node
       - intersection_type_detector_node
       - random_april_tag_turns_node
       - stop_line_filter_node
       - unicorn_intersection_node
       - graph_planner_node
+      - deadreckoning_node
     lights: "WHITE"
 
   INTERSECTION_CONTROL:
@@ -123,6 +128,7 @@ states:
       - lane_controller_node
       - unicorn_intersection_node
       - graph_planner_node
+      - deadreckoning_node
 
   TRANSITION:
     transitions:
@@ -136,4 +142,5 @@ states:
       - lane_controller_node
       - unicorn_intersection_node
       - graph_planner_node
+      - deadreckoning_node
     lights: "RED"
