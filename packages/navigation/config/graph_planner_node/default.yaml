@@ -1,16 +1,9 @@
-# Universal graph_planner params — graph-INDEPENDENT (scale- and density-invariant).
-# Loaded for every localization type. Graph-specific params live in
-# graph_ekf.yaml / graph_slam.yaml, loaded on top of this by the launch file.
+# Universal graph_planner params — completely robot- and graph-independent.
+# All tunable params live in <veh>.yaml and graph_ekf/slam_<veh>.yaml.
 
 # Graph loading (cache file is already per-type: clustered_nodes_<type>.txt)
 use_cached: false
 data_dir: "/data/graph_planner"
 
-# Directional command — pure decision geometry, independent of the graph
-turn_angle_threshold_deg: 13
-
-# A* planner — pure decision geometry, independent of the graph
-u_turn_thresh_deg: 120.0
-
-# Max angle difference of orientations of current and target nodes
-arrival_max_angle_diff: 90
+# Set to true to show dead-reckoning pose alongside EKF in the debug image.
+dr_overlay: false

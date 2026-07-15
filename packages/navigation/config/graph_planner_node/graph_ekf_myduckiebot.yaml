@@ -1,0 +1,27 @@
+# Graph + EKF-localization params for myduckiebot (simulation).
+# Tune these against the simulated graph density and sensor characteristics.
+# Loaded on top of default.yaml, then myduckiebot.yaml is loaded on top of this.
+
+# Clustering
+use_clustering: true
+spatial_radius: 0.2
+angle_threshold_deg: 45.0
+
+# Edge building
+edge_max_dist: 0.5
+edge_max_heading_diff_deg: 130.0
+edge_rescue_dist: 4.0
+edge_cone_threshold_deg: 0.0
+edge_visibility_deg: 100.0
+edge_direction_change_deg: 100.0
+edge_prune_shortcuts: false
+edge_prune_max_hops: 2
+
+# Localization / candidate matching
+candidate_max_dist: 0.7
+candidate_k: 3
+candidate_heading_tol_deg: 45.0
+arrival_threshold: 0.3
+
+# Directional command
+skip_n_nodes: 7

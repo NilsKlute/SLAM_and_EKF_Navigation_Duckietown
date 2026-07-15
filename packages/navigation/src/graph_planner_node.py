@@ -48,7 +48,8 @@ class GraphPlannerNode(DTROS):
         self._last_gt_time      = rospy.Time(0)
         self.use_cached         = rospy.get_param("~use_cached", False)
         self.data_dir           = rospy.get_param("~data_dir", "/data/graph_planner")
-        if self.veh == "myduckiebot:":
+        self.dr_overlay         = rospy.get_param("~dr_overlay", False)
+        if self.veh == "myduckiebot":
             graph_file_ekf          = rospy.get_param("~graph_file_ekf_myduckiebot")
             graph_file_slam         = rospy.get_param("~graph_file_slam_myduckiebot")
         elif self.veh == "roboduck":
@@ -60,11 +61,16 @@ class GraphPlannerNode(DTROS):
         self.use_clustering     = rospy.get_param("~use_clustering", True)
         spatial_radius          = rospy.get_param("~spatial_radius", 1.8)
         angle_threshold_deg     = rospy.get_param("~angle_threshold_deg", 45.0)
-        edge_max_dist           = rospy.get_param("~edge_max_dist", 4.0)
-        edge_max_heading_diff   = rospy.get_param("~edge_max_heading_diff_deg", 130.0)
+        edge_max_dist              = rospy.get_param("~edge_max_dist", 4.0)
+        edge_max_heading_diff      = rospy.get_param("~edge_max_heading_diff_deg", 130.0)
+        edge_rescue_dist           = rospy.get_param("~edge_rescue_dist", 4.0)
+        edge_cone_threshold_deg    = rospy.get_param("~edge_cone_threshold_deg", 20.0)
+        edge_visibility_deg        = rospy.get_param("~edge_visibility_deg", 100.0)
+        edge_direction_change_deg  = rospy.get_param("~edge_direction_change_deg", 100.0)
 
-        self.candidate_max_dist    = rospy.get_param("~candidate_max_dist", 1.5)
-        self.candidate_k           = rospy.get_param("~candidate_k", 3)
+        self.candidate_max_dist         = rospy.get_param("~candidate_max_dist", 1.5)
+        self.candidate_k                = rospy.get_param("~candidate_k", 3)
+        self.candidate_heading_tol_deg  = rospy.get_param("~candidate_heading_tol_deg", 45.0)
         self.arrival_threshold     = rospy.get_param("~arrival_threshold", 0.5)
         self.arrival_max_angle_diff = rospy.get_param("~arrival_max_angle_diff", 100)
         self.skip_n_nodes          = rospy.get_param("~skip_n_nodes", 2)
@@ -96,7 +102,13 @@ class GraphPlannerNode(DTROS):
                 rospy.loginfo(f"[graph_planner] Clustering DISABLED — using {len(raw)} raw keyframes as nodes")
 
         self.directed_edges = self.build_directed_edges(
-            self.clustered_nodes, max_dist=edge_max_dist, max_heading_diff_deg=edge_max_heading_diff)
+            self.clustered_nodes,
+            max_dist=edge_max_dist,
+            max_heading_diff_deg=edge_max_heading_diff,
+            rescue_dist=edge_rescue_dist,
+            cone_threshold_deg=edge_cone_threshold_deg,
+            visibility_deg=edge_visibility_deg,
+            direction_change_deg=edge_direction_change_deg)
         if rospy.get_param("~edge_prune_shortcuts", False):
             self.directed_edges = self.prune_shortcut_edges(
                 self.directed_edges, self.clustered_nodes,
@@ -144,6 +156,12 @@ class GraphPlannerNode(DTROS):
         self.plan = None
         self.curr_node = None
 
+        # Dead-reckoning overlay — stores the DR pose transformed into map coords.
+        # _dr_origin: DR (x,y,theta) at the moment alignment was first computed.
+        # _dr_ekf_ref: EKF map pose at that same moment, used as the reference frame.
+        self._latest_dr_pose = None
+        self._dr_origin      = None
+        self._dr_ekf_ref     = None
 
         # --------------------- Subscribers ------------------------
 
@@ -165,6 +183,10 @@ class GraphPlannerNode(DTROS):
         self.sub_detected_tags = rospy.Subscriber("ekf_localization_node/detected_tags", Int32MultiArray, self.cb_detected_tags)
         self.sub_debug_mode = rospy.Subscriber("~debug_mode", BoolStamped, self.cb_debug_mode)
         self.sub_debug_go   = rospy.Subscriber("~debug_go", BoolStamped, self.cb_debug_go)
+
+        # Dead-reckoning pose — comparison overlay in the debug image (dr_overlay: true).
+        if self.dr_overlay:
+            rospy.Subscriber("deadreckoning_node/odom", Odometry, self.cb_dr_odom)
 
 
          # --------------------- Publishers ------------------------
@@ -247,7 +269,8 @@ class GraphPlannerNode(DTROS):
 
 
         candidates = self.get_candidate_nodes(
-            x, y, theta, max_dist=self.candidate_max_dist, k=self.candidate_k)
+            x, y, theta, max_dist=self.candidate_max_dist, k=self.candidate_k,
+            heading_tol_deg=self.candidate_heading_tol_deg)
 
         # Init Plan after target and first localization are received
         if not self.init_plan and self.plan is None:
@@ -328,7 +351,7 @@ class GraphPlannerNode(DTROS):
 
     def _publish_debug_image(self, rx, ry, rtheta):
         try:
-            fig, ax = plt.subplots(figsize=(10, 10))
+            fig, ax = plt.subplots(figsize=(14, 14))
 
             # All graph edges — thin black arrows
             for (id_a, id_b) in self.directed_edges:
@@ -336,7 +359,7 @@ class GraphPlannerNode(DTROS):
                 b = self.nodes_dict[id_b]
                 ax.annotate("", xy=(b[1], b[2]), xytext=(a[1], a[2]),
                             arrowprops=dict(arrowstyle="->", color="black",
-                                           lw=3, alpha=0.95, shrinkA=5, shrinkB=5))
+                                           lw=5, alpha=0.95, shrinkA=5, shrinkB=5))
 
             # Planned path — thick gold arrows
             if self.plan is not None and len(self.plan) > 1:
@@ -352,15 +375,15 @@ class GraphPlannerNode(DTROS):
             my = self.clustered_nodes[:, 2]
             mtheta = self.clustered_nodes[:, 3]
             ax.scatter(mx, my, c='royalblue', s=60, zorder=5,
-                       edgecolors='navy', linewidths=0.5)
+                       edgecolors='navy', linewidths=1)
             ax.quiver(mx, my, np.cos(mtheta), np.sin(mtheta),
-                      color='steelblue', scale=30, width=0.004, alpha=0.5, zorder=6)
+                      color='steelblue', scale=30, width=0.01, alpha=0.5, zorder=6)
 
             # Node ID labels (skipped for large raw-keyframe graphs — unreadable and slow)
             if len(self.clustered_nodes) <= 300:
                 for node in self.clustered_nodes:
                     ax.annotate(str(int(node[0])), (node[1], node[2]),
-                                fontsize=7, ha='center', va='bottom', color='navy', zorder=7)
+                                fontsize=12, ha='center', va='bottom', color='navy', zorder=7)
 
             # AprilTag landmarks (from the EKF map) — verify placement vs graph.
             # Currently-observed tags are highlighted red/larger.
@@ -368,10 +391,10 @@ class GraphPlannerNode(DTROS):
                 for tid, (px, py) in self.apriltags.items():
                     seen = tid in self.observed_tags
                     ax.scatter(px, py, c=('red' if seen else 'purple'),
-                               marker='P', s=(170 if seen else 90),
+                               marker='P', s=(250 if seen else 90),
                                zorder=(10 if seen else 8),
-                               edgecolors='black', linewidths=0.5)
-                    ax.annotate(str(tid), (px, py), fontsize=7,
+                               edgecolors='black', linewidths=3)
+                    ax.annotate(str(tid), (px, py), fontsize=14,
                                 color=('red' if seen else 'purple'),
                                 ha='left', va='bottom', zorder=(10 if seen else 8))
 
@@ -387,11 +410,31 @@ class GraphPlannerNode(DTROS):
                 ax.scatter(cn[1], cn[2], c='red', s=250, zorder=9,
                            edgecolors='darkred', linewidths=2)
 
-            # Robot pose — red star + heading arrow
+            # EKF robot pose — red star + heading arrow
             ax.scatter(rx, ry, c='red', s=350, marker='*', zorder=10,
                        edgecolors='darkred', linewidths=1)
             ax.quiver(rx, ry, np.cos(rtheta), np.sin(rtheta),
                       color='red', scale=20, width=0.007, zorder=11)
+            ax.annotate("EKF", (rx, ry), fontsize=9, color='red',
+                        xytext=(5, 5), textcoords='offset points', zorder=12)
+
+            # Dead-reckoning pose — lime star + heading arrow (for comparison with EKF)
+            if self.dr_overlay and self._latest_dr_pose is not None:
+                drx, dry, drtheta = self._latest_dr_pose
+                ax.scatter(drx, dry, c='lime', s=350, marker='*', zorder=10,
+                           edgecolors='darkgreen', linewidths=1)
+                ax.quiver(drx, dry, np.cos(drtheta), np.sin(drtheta),
+                          color='lime', scale=20, width=0.007, zorder=11)
+                ax.annotate("DR", (drx, dry), fontsize=9, color='lime',
+                            xytext=(5, -12), textcoords='offset points', zorder=12)
+                # Distance between the two estimates
+                sep = math.hypot(drx - rx, dry - ry)
+                hdiff = abs(np.degrees(self.normalize_angle(drtheta - rtheta)))
+                ax.text(0.02, 0.06,
+                        f"DR vs EKF: pos_err={sep:.3f}m  hdg_err={hdiff:.1f}°",
+                        transform=ax.transAxes, fontsize=9, va='bottom',
+                        color='lime',
+                        bbox=dict(boxstyle='round', facecolor='#1a1a1a', alpha=0.75))
 
             # --- Intersection-decision debug overlay ---
             if self.planner_debug and self._dbg_next_id is not None \
@@ -603,6 +646,38 @@ class GraphPlannerNode(DTROS):
     def cb_detected_tags(self, msg):
         # Currently-observed AprilTag ids from the EKF (empty when none in view).
         self.observed_tags = set(int(i) for i in msg.data)
+
+    def cb_dr_odom(self, msg):
+        dr_x     = msg.pose.pose.position.x
+        dr_y     = msg.pose.pose.position.y
+        q        = msg.pose.pose.orientation
+        dr_theta = 2.0 * np.arctan2(q.z, q.w)
+
+        # Align DR to the EKF map frame on first contact (after EKF has settled).
+        if self._dr_origin is None:
+            ex, ey, etheta = self._latest_pose
+            if ex == 0.0 and ey == 0.0:
+                return  # EKF hasn't received a real pose yet — wait
+            self._dr_origin  = (dr_x, dr_y, dr_theta)
+            self._dr_ekf_ref = (ex, ey, etheta)
+            rospy.loginfo(
+                f"[graph_planner] DR alignment: DR=({dr_x:.3f},{dr_y:.3f},{np.degrees(dr_theta):.1f}°) "
+                f"EKF=({ex:.3f},{ey:.3f},{np.degrees(etheta):.1f}°)"
+            )
+
+        ox, oy, otheta     = self._dr_origin
+        ex, ey, etheta     = self._dr_ekf_ref
+        # Displacement in DR's own frame since alignment
+        ddx    = dr_x - ox
+        ddy    = dr_y - oy
+        dtheta = dr_theta - otheta
+        # Rotate displacement into EKF map frame (EKF initial heading)
+        cos_e, sin_e = np.cos(etheta), np.sin(etheta)
+        self._latest_dr_pose = (
+            ex + cos_e * ddx - sin_e * ddy,
+            ey + sin_e * ddx + cos_e * ddy,
+            etheta + dtheta,
+        )
 
     def _reset_planning(self):
         self.plan = None

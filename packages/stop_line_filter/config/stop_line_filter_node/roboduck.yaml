@@ -1,0 +1,8 @@
+# Trigger earlier (0.30 vs default 0.20) to compensate for real-robot latency.
+# Lower min_segs (4 vs 6) since the physical camera often detects fewer red segments.
+# Wider max_y (0.30 vs 0.20) for real-world ground-projection variance.
+stop_distance: 0.20
+min_segs: 4
+off_time: 2
+max_y: 0.30
+verbose: 1

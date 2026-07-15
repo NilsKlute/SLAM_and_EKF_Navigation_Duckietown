@@ -83,6 +83,7 @@ class EKFLocalizationNode(DTROS):
         self.no_predict = rospy.get_param("~no_predict", False)
         self.no_update = rospy.get_param("~no_update", False)
         self.sim = rospy.get_param("~test_sim", False)
+        self.verbose = rospy.get_param("~verbose", 0)
         self.right_wheel_mutex = Lock()
         self.left_wheel_mutex = Lock()
         self.gt_pose = None
@@ -91,13 +92,15 @@ class EKFLocalizationNode(DTROS):
         # Init the parameters
         self.resetParameters()
 
-        # nominal R and L, you may change these if needed:
-
-        self.R = 0.0318  # meters, default value of wheel radius
-        self.baseline = 0.11  # meters, default value of baseline for DB21
+        self.R        = rospy.get_param("~wheel_radius",   0.033)
+        self.baseline = rospy.get_param("~wheel_baseline", 0.10)
         self.camera_model = None
         self.rectifier = None
         self.rect_camera_K = None
+        self.pub_detected_tags = None
+        self.pub_detections = None
+        self.pub_pose_covariance = None
+        self.pub_landmark_markers = None
         self.jpeg = TurboJPEG()
         self.mapx = None
         self.mapy = None
@@ -425,7 +428,7 @@ class EKFLocalizationNode(DTROS):
         if self.no_update:
             return
 
-        if self.camera_model is None:
+        if self.camera_model is None or self.rectifier is None:
             return
 
         if self.latest_img is None:
@@ -469,10 +472,14 @@ class EKFLocalizationNode(DTROS):
                 5.0,
                 f"[ekf_localization_node] AprilTag pose solver reported ambiguity"
             )
-        # Schneller Sanity-Check direkt im doUpdate, VOR dem EKF-Zeug:
-        #print(f"raw detections: {len(detections)}")
-        #   for d in detections:
-            #print(f"  id={d.tag_id}, margin={d.decision_margin:.1f}, in_map={d.tag_id in self.map}")
+        if self.verbose >= 1:
+            tag_strs = ", ".join(
+                f"id={d.tag_id} margin={d.decision_margin:.0f} {'[map]' if d.tag_id in self.map else '[unknown]'}"
+                for d in detections
+            )
+            rospy.loginfo_throttle(1.0,
+                f"[EKF] raw_detections={len(detections)}: {tag_strs or 'none'}"
+            )
 
         # Process each detection
         for detection in detections:
@@ -518,9 +525,23 @@ class EKFLocalizationNode(DTROS):
                 bearing = sim_bearing
 
             # Update the EKF with this measurement
-            self.ekf.update([range_estimate, bearing], [tag_x, tag_y])
+            y_innov, S = self.ekf.update([range_estimate, bearing], [tag_x, tag_y])
+
+            if self.verbose >= 1 and y_innov is not None:
+                nis = float(y_innov @ np.linalg.solve(S, y_innov))
+                with self.ekf.q_mutex:
+                    q = self.ekf.q.copy()
+                    P = self.ekf.P.copy()
+                rospy.loginfo_throttle(0.5,
+                    f"[EKF] tag={tag_id}  range={range_estimate:.3f}m  bearing={np.degrees(bearing):.1f}deg\n"
+                    f"      innov: range={y_innov[0]:+.4f}m  bearing={np.degrees(y_innov[1]):+.2f}deg\n"
+                    f"      NIS={nis:.3f}  (2-DOF 95%% chi2=5.99 -- NIS>>6 => filter inconsistent)\n"
+                    f"      state: x={q[0]:.3f}m  y={q[1]:.3f}m  theta={np.degrees(q[2]):.1f}deg\n"
+                    f"      cov_diag: P_xx={P[0,0]:.5f}  P_yy={P[1,1]:.5f}  P_tt={P[2,2]:.5f}"
+                )
         ids = [det.tag_id for det in detections]
-        self.pub_detected_tags.publish(Int32MultiArray(data=[int(i) for i in ids]))
+        if self.pub_detected_tags is not None:
+            self.pub_detected_tags.publish(Int32MultiArray(data=[int(i) for i in ids]))
         self.publish_landmarks(ids)
         self.publish_detections(rect_image_gray, detections, self.latest_img.header)
 
@@ -557,7 +578,8 @@ class EKFLocalizationNode(DTROS):
         odom_msg.header.frame_id = "map"
         odom_msg.pose = pose_cov
 
-        self.pub_pose_covariance.publish(odom_msg)
+        if self.pub_pose_covariance is not None:
+            self.pub_pose_covariance.publish(odom_msg)
 
 
     def resetParameters(self):
@@ -605,7 +627,8 @@ class EKFLocalizationNode(DTROS):
 
 
             marker_array.markers.append(m)
-        self.pub_landmark_markers.publish(marker_array)
+        if self.pub_landmark_markers is not None:
+            self.pub_landmark_markers.publish(marker_array)
 
     def publish_detections(self, img, detections, header):
 
@@ -636,7 +659,8 @@ class EKFLocalizationNode(DTROS):
         img_msg.format = "jpeg"
         img_msg.data = self.jpeg.encode(img)
         # ---
-        self.pub_detections.publish(img_msg)
+        if self.pub_detections is not None:
+            self.pub_detections.publish(img_msg)
 
 
 if __name__ == "__main__":

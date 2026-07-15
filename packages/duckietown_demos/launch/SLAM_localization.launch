@@ -15,7 +15,11 @@
     <arg name="/fsm/logic_gate" value="false"/>
 
     <!-- Basic functionalities -->
-    <arg name="line_detector_param_file_name" default="default"/>
+    <arg name="line_detector_param_file_name" default="$(arg veh)"/>
+    <arg name="lane_controller_param_file_name" default="$(arg veh)"/>
+    <arg name="unicorn_intersection_param_file_name" default="$(arg veh)"/>
+    <arg name="stop_line_filter_param_file_name" default="$(arg veh)"/>
+    <arg name="intersection_type_detector_param_file_name" default="$(arg veh)"/>
     <arg name="anti_instagram" default="true"/>
     <arg name="/camera/raw"    value="true"/>
     <arg name="/camera/rect"   value="true"/>

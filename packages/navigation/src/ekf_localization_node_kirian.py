@@ -130,7 +130,7 @@ class EKFLocalizationNode(DTROS):
         # nominal R and L, you may change these if needed:
 
         self.R = 0.0318  # meters, default value of wheel radius
-        self.baseline = 0.11  # meters, default value of baseline for DB21
+        self.baseline = 0.10  # meters, default value of baseline for DB21
         self.camera_model = None
         self.rectifier = None
         self.rect_camera_K = None

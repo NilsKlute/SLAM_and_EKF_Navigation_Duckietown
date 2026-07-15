@@ -1,0 +1,22 @@
+img_size: [120,160]
+top_cutoff: 40
+bottom_cutoff: 40
+
+# DBSCAN — tune eps/min_samples if clusters are noisy or merged
+steepness_threshold: 0.20
+dbscan_eps: 10
+dbscan_min_samples: 10
+
+# Red HSV thresholds — tune if real camera colours differ from sim
+# red_hsv_low1:  [0,   70,  50]
+# red_hsv_high1: [10, 255, 255]
+# red_hsv_low2:  [170,  70,  50]
+# red_hsv_high2: [180, 255, 255]
+
+# Red HSV thresholds — tune if real camera colours differ from sim
+red_hsv_low1:  [0,   100,  50]
+red_hsv_high1: [10, 255, 255]
+red_hsv_low2:  [170,  100,  50]
+red_hsv_high2: [180, 255, 255]
+
+verbose: 0

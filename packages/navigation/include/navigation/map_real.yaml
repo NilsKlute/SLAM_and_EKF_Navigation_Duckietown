@@ -18,14 +18,14 @@ map:
   "11":
     position: [1.23, 1.23]
   "57":
-    position: [2.40, 123]
+    position: [2.40, 1.23]
   "26":
-    position: [1,23, 3.00]
+    position: [1.23, 3.00]
   "65":
     position: [2.40, 1.85]
-  “66”:
+  "66":
     position: [0.00, 3.00]
-  "67”:
-    position: [0.00, 1.23]
-  “74”:
-    position: [0.47, 1.85]
+  "67":
+    position: [0.5, 1.23]
+  "74":
+    position: [0.00, 1.85]

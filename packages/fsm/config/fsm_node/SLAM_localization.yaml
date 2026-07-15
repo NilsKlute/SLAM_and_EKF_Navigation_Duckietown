@@ -83,6 +83,7 @@ states:
       - target_selection_node
       - graph_planner_node
       - deadreckoning_node
+      - line_detector_node
     lights: "WHITE"
 
 
@@ -108,6 +109,7 @@ states:
       target_reached: "IDLE"
     active_nodes:
       - anti_instagram
+      - line_detector_node
       - intersection_type_detector_node
       - random_april_tag_turns_node
       - stop_line_filter_node
