@@ -1,25 +1,31 @@
 map:
   "27":
-    position: [0.0, 0.0]
+    position: [1.23, 3.60]
   "25":
-    position: [0.0, 0.60]
+    position: [1.23, 1.85]
   "32":
-    position: [0.0, 0.65]
+    position: [3.00, 1.23]
   "61":
-    position: [0.0, 1.75]
+    position: [1.83, 1.23]
   "34":
-    position: [-0.6, 0.0]
+    position: [1.83, 3.00]
   "9":
-    position: [-1.2, 0.0]
+    position: [2.40, 3.00]
   "33":
-    position: [-1.2, -0.05]
+    position: [1.83, 1.85]
   "10":
-    position: [-1.8, 0.0]
+    position: [1.83, 3.60]
   "11":
-    position: [-1.8, 0.6]
+    position: [1.23, 1.23]
   "57":
-    position: [-1.2, 0.6]
+    position: [2.40, 123]
   "26":
-    position: [-0.6, 0.6]
+    position: [1,23, 3.00]
   "65":
-    position: [-0.6, 0.65]
+    position: [2.40, 1.85]
+  “66”:
+    position: [0.00, 3.00]
+  "67”:
+    position: [0.00, 1.23]
+  “74”:
+    position: [0.47, 1.85]

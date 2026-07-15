@@ -604,19 +604,33 @@ def build_street_graph(classification, tile_counts, tile_size=TILE_SIZE,
 # ---------------------------------------------------------------------
 
 def plot_street_graph(classification, tile_counts, tile_size=TILE_SIZE,
-                       lane_offset=LANE_OFFSET, min_events=1, ax=None, show=False):
+                       lane_offset=LANE_OFFSET, min_events=1, ax=None, 
+                       title="Street Graph over Abstracted Tile Layout", show=False):
+    """
+    Plot the street graph with directed edges and node poses.
+    
+    Args:
+        classification: Dictionary mapping tile positions to street types
+        tile_counts: Dictionary mapping tile positions to direction counts
+        tile_size: Size of each tile in meters
+        lane_offset: Offset for lane lines within tiles
+        min_events: Minimum number of events to include a tile
+        ax: Matplotlib axis to plot on (creates new if None)
+        title: Title for the plot
+        show: Whether to display the plot immediately
+    """
     node_pose, edges = build_street_graph(classification, tile_counts, tile_size,
                                            lane_offset, min_events)
 
     # Use the provided ax if available
     if ax is None:
         fig, ax = plot_tile_roads(classification, tile_counts, tile_size, min_events,
-                                   title="Street Graph over Abstracted Tile Layout")
+                                   title=title)
     else:
         fig = ax.figure
         # Draw tile roads on the provided axis
         plot_tile_roads(classification, tile_counts, tile_size, min_events,
-                        title="Street Graph over Abstracted Tile Layout", ax=ax)
+                        title=title, ax=ax)
 
     for (a, b) in edges:
         xA, yA, _ = node_pose[a]
@@ -632,10 +646,14 @@ def plot_street_graph(classification, tile_counts, tile_size=TILE_SIZE,
     ax.quiver(xs, ys, np.cos(thetas), np.sin(thetas), color='orange',
               scale=25, width=0.004, zorder=7)
 
-    # Ensure grid lines at 0.6m intervals
+    # Ensure grid lines at tile_size intervals
     ax.xaxis.set_major_locator(MultipleLocator(tile_size))
     ax.yaxis.set_major_locator(MultipleLocator(tile_size))
     ax.grid(True, linewidth=0.5, color='gray', alpha=0.3, linestyle='-')
+    
+    # Set title if provided
+    if title:
+        ax.set_title(title, fontsize=12, fontweight='bold')
     
     if show:
         plt.show()
@@ -922,11 +940,9 @@ _TYPE_COLOR_MAP = {
 
 def plot_tile_probabilities(tile_probabilities, uncertainty,
                              tile_size=TILE_SIZE, ax=None, show=False,
-                             title="Per-Tile Belief (Pre-Propagation)"):
+                             title=None):  # title now optional
     """
-    Visualizes the raw per-tile belief BEFORE global constraint propagation:
-    the most likely structural type per tile, shaded by confidence
-    (opaque = low entropy / high confidence, faint = high entropy).
+    Visualizes the raw per-tile belief BEFORE global constraint propagation.
     """
     own_fig = ax is None
     if own_fig:
@@ -937,7 +953,6 @@ def plot_tile_probabilities(tile_probabilities, uncertainty,
     if not tile_probabilities:
         ax.text(0.5, 0.5, "No tile probability data available", 
                 ha='center', va='center', transform=ax.transAxes, fontsize=12)
-        ax.set_title(title)
         if show:
             plt.show()
         return fig, ax
@@ -985,7 +1000,9 @@ def plot_tile_probabilities(tile_probabilities, uncertainty,
         ax.set_yticks(y_ticks)
         ax.grid(True, linestyle='-', linewidth=0.5, alpha=0.3, zorder=0)
     
-    ax.set_title(title, fontsize=12, pad=10)
+    # Only set title if provided
+    if title:
+        ax.set_title(title, fontsize=12, pad=10)
 
     if own_fig:
         fig.tight_layout()
@@ -994,9 +1011,8 @@ def plot_tile_probabilities(tile_probabilities, uncertainty,
 
     return fig, ax
 
-
 def plot_tile_types(final_types, observed_tiles, tile_size=TILE_SIZE,
-                     ax=None, show=False, title="Globally Consistent Inferred Road Layout"):
+                     ax=None, show=False, title=None):  # title now optional
     own_fig = ax is None
     if own_fig:
         fig, ax = plt.subplots(figsize=(12, 10))
@@ -1029,7 +1045,6 @@ def plot_tile_types(final_types, observed_tiles, tile_size=TILE_SIZE,
 
     ax.set_aspect("equal")
     
-    # Use final_types (not tile_probabilities) to get tile indices
     tile_indices_x = sorted({pos[0] for pos in final_types.keys()})
     tile_indices_y = sorted({pos[1] for pos in final_types.keys()})
     if tile_indices_x and tile_indices_y:
@@ -1039,7 +1054,8 @@ def plot_tile_types(final_types, observed_tiles, tile_size=TILE_SIZE,
         ax.set_yticks(y_ticks)
         ax.grid(True, linestyle='-', linewidth=0.5, alpha=0.3, zorder=0)
     
-    ax.set_title(title, fontsize=12, pad=10)
+    if title:
+        ax.set_title(title, fontsize=12, pad=10)
 
     if own_fig:
         fig.tight_layout()

@@ -310,30 +310,42 @@ OPPOSITE = {
 
 def generate_tile_sequences(tile_types, n_tiles=3):
     all_sequences = []
-    
+
+    # Define U-turn types
     UTURNS = {"N→N", "S→S", "E→E", "W→W"}
-    
+    CURVES = {"S→E", "E→N", "N→W", "W→S", "E→S", "N→E", "W→N", "S→W"}
+    STRAIGHTS = {"S→N", "N→S", "W→E", "E→W"}
+
     for k in range(2, n_tiles + 1):
         for seq in product(tile_types, repeat=k):
             valid = True
-            
+
+            # Check if connections are valid
             for i in range(k - 1):
                 _, exit_i = entry_exit(seq[i])
                 entry_next, _ = entry_exit(seq[i+1])
-                
+
                 if exit_i != OPPOSITE[entry_next]:
                     valid = False
                     break
-            
+
+            # Check for consecutive U-turns
             if valid:
                 for i in range(k - 1):
                     if seq[i] in UTURNS and seq[i+1] in UTURNS:
                         valid = False
                         break
-            
+
+            # Check for 'curve has to be followed by straight' validation (original rule)
+            if valid:
+                for i in range(k - 1):
+                    if seq[i] in CURVES and seq[i+1] not in STRAIGHTS:
+                        valid = False
+                        break
+
             if valid:
                 all_sequences.append(list(seq))
-    
+
     return all_sequences
 
 
@@ -485,6 +497,8 @@ def infer_map(trajectory, templates, debug=False):
 
     current_tile = np.array(start_tile, dtype=int)
     tile_nr = 1
+    last_picked_exit_direction = None # None for the very first tile, no prior constraint
+
 
     OPPOSITE_MAP = {
         "S→N": "N-S", "N→S": "N-S",
@@ -508,7 +522,24 @@ def infer_map(trajectory, templates, debug=False):
         losses = {}
         fitted_candidates = {}
 
-        for seq in sequences:
+        #  Filter sequences based on the last_picked_exit_direction
+        current_sequences_to_test = sequences
+        if last_picked_exit_direction is not None:
+            required_entry_direction = OPPOSITE[last_picked_exit_direction]
+            filtered_sequences = []
+            for seq in sequences:
+                first_tile_entry, _ = entry_exit(seq[0])
+                if first_tile_entry == required_entry_direction:
+                    filtered_sequences.append(seq)
+            current_sequences_to_test = filtered_sequences
+            if not current_sequences_to_test: # If no sequences match, cannot proceed
+                if debug:
+                    print(f"[{tuple(current_tile)}] No sequences found matching required entry direction: {required_entry_direction}. Stopping.")
+                break
+
+        # Test all 3 tile hypotheses using the filtered sequences
+        for seq in current_sequences_to_test: # USE THE FILTERED LIST
+
             template = build_3tile_template(seq, current_tile, templates)
             loss = trajectory_loss(segment, template)
             loss = loss + trajectory_loss(template, segment)
@@ -592,10 +623,13 @@ def infer_map(trajectory, templates, debug=False):
         queue = np.concatenate([segment[keep_mask], queue[remove_count:]], axis=0)
         queue_ids = np.concatenate([segment_ids[keep_mask], queue_ids[remove_count:]], axis=0)
 
-        first_tile = best_tile_names[0]
-        _, exit_dir = entry_exit(first_tile)
-        current_tile = (current_tile + MOVE[exit_dir] / TILE_SIZE)
+        first_tile_of_best_sequence = best_tile_names[0]
+        _, exit_dir_of_best_sequence = entry_exit(first_tile_of_best_sequence)
+        current_tile = (current_tile + MOVE[exit_dir_of_best_sequence] / TILE_SIZE)
         current_tile = np.round(current_tile).astype(int)
+
+        # NEW: Update the last picked exit direction for the next iteration
+        last_picked_exit_direction = exit_dir_of_best_sequence
 
     probabilities = {}
     uncertainty = {}
@@ -626,3 +660,4 @@ def infer_map(trajectory, templates, debug=False):
         print("="*50)
     
     return probabilities, uncertainty, fitted_sections, source_sections, vote_counts, total_visits
+

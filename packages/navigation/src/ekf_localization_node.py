@@ -165,6 +165,11 @@ class EKFLocalizationNode(DTROS):
             [ 0.0, rospy.get_param("~R_tt", 0.0) ],
         ])
         self.ekf = EKF(q_0, P_0, Q, R)
+        print("q_0:",q_0)
+        print("P_0:",P_0)
+        print("Q:",Q)
+        print("R:",R)
+
 
         map_file = rospy.get_param("~map", None)
         if map_file is None:
@@ -283,23 +288,11 @@ class EKFLocalizationNode(DTROS):
         msg.data = np.array(cv2.imencode('.jpg', img_bgr)[1]).tobytes()
         return msg
 
-    def _build_trajectory_comparison_figure(self, smooth_traj, ax=None):
+    
+    
+    def _build_trajectory_comparison_figure(self, smooth_traj, fitted_traj=None, ax=None, title=None):
         """
-        Plot ground truth, EKF forward, and RTS-smoothed trajectory.
-        
-        Parameters
-        ----------
-        smooth_traj : np.ndarray
-            Smoothed trajectory (N, 2).
-        ax : matplotlib.axes.Axes, optional
-            Axis to draw on. If None, a new figure and axis are created.
-
-        Returns
-        -------
-        fig : matplotlib.figure.Figure
-            The figure containing the plot.
-        ax : matplotlib.axes.Axes
-            The axis used for plotting.
+        Plot ground truth, EKF forward, RTS-smoothed, and optionally fitted trajectory.
         """
         if ax is None:
             fig, ax = plt.subplots(figsize=(8, 8))
@@ -316,44 +309,20 @@ class EKFLocalizationNode(DTROS):
         if smooth_traj.shape[0] > 0:
             ax.plot(smooth_traj[:, 0], smooth_traj[:, 1], color='blue',
                     linewidth=1.5, label='RTS-smoothed')
+        if fitted_traj is not None and fitted_traj.shape[0] > 0:
+            ax.plot(fitted_traj[:, 0], fitted_traj[:, 1], color='purple',
+                    linewidth=2.0, linestyle='-.', label='Fitted Template')
 
         ax.set_aspect('equal')
-        ax.set_xlabel("X [m]")
-        ax.set_ylabel("Y [m]")
-        ax.set_title("GT vs EKF vs RTS-smoothed trajectory")
+        
+        if title:
+            ax.set_title(title)
         ax.legend(loc='best', fontsize=8)
-        
-        # Grid lines every 0.6m (tile size) to match tile maps
-        TILE_SIZE = 0.6
-        
-        # Get data bounds from all trajectories
-        all_data = []
-        if len(self.gt_trajectory) > 0:
-            all_data.append(np.array(self.gt_trajectory))
-        if len(self.ekf_trajectory) > 0:
-            all_data.append(np.array(self.ekf_trajectory))
-        if smooth_traj.shape[0] > 0:
-            all_data.append(smooth_traj)
-        
-        if all_data:
-            all_data = np.vstack(all_data)
-            
-            # Calculate tile-aligned grid boundaries
-            x_min = np.floor(all_data[:, 0].min() / TILE_SIZE) * TILE_SIZE
-            x_max = np.ceil(all_data[:, 0].max() / TILE_SIZE) * TILE_SIZE
-            y_min = np.floor(all_data[:, 1].min() / TILE_SIZE) * TILE_SIZE
-            y_max = np.ceil(all_data[:, 1].max() / TILE_SIZE) * TILE_SIZE
-            
-            # Create ticks at every 0.6m
-            x_ticks = np.arange(x_min, x_max + TILE_SIZE, TILE_SIZE)
-            y_ticks = np.arange(y_min, y_max + TILE_SIZE, TILE_SIZE)
-            
-            ax.set_xticks(x_ticks)
-            ax.set_yticks(y_ticks)
-            ax.grid(True, linestyle='-', linewidth=0.5, alpha=0.3, zorder=0)
+        ax.grid(True, linewidth=0.5, alpha=0.4)
 
         return fig, ax
-    
+
+
     def publish_corrected_trajectory_and_map(self):
         smooth_traj = self.ekf.rts_smooth()
         if len(smooth_traj) < 2:
@@ -391,31 +360,21 @@ class EKFLocalizationNode(DTROS):
         # --------------------------------------------
         # 2. Fitted trajectory analysis (using infer_map)
         # --------------------------------------------
-        # Convert trajectory to [x, y, theta] format
-        trajectory = smooth_traj[:, :3]  # Assuming smooth_traj has x, y, theta
-        
-        # Run the inference with debug=False to reduce output
+        trajectory = smooth_traj[:, :3]
+
         fitted_probabilities, fitted_uncertainty, fitted_sections, source_sections, fitted_vote_counts, fitted_total_visits = infer_map(
             trajectory,
             templates,
-            debug=False  # Set to True for detailed output
+            debug=False
         )
-        
-        # Concatenate fitted trajectory for plotting
+
         if len(fitted_sections) > 0:
             fitted_traj = np.concatenate(fitted_sections, axis=0)
         else:
             fitted_traj = np.empty((0, 3))
-        
-        # Check if fitted inference produced valid results
-        if not fitted_probabilities or len(fitted_probabilities) == 0:
-            print("Warning: Fitted inference produced no results, skipping publication")
-            return
-        
-        # Convert fitted probabilities to observed tiles format
+
         fitted_observed_tiles = {pos: max(probs, key=probs.get) for pos, probs in fitted_probabilities.items()}
-        
-        # Run propagate_constraints on fitted results
+
         fitted_final_types, fitted_intersection_directions, fitted_updated_observed = propagate_constraints(
             vote_counts=fitted_vote_counts,
             total_visits=fitted_total_visits,
@@ -424,76 +383,211 @@ class EKFLocalizationNode(DTROS):
             damping=0.4,
             verbose=False,
         )
-        
-        # Convert fitted final types to classification and tile_counts
+
         fitted_classification = {}
         fitted_tile_counts = {}
         for pos, tile_type in fitted_final_types.items():
             fitted_classification[pos] = BP_TO_CLASSIFICATION.get(tile_type, "empty")
-            # Create tile_counts for street graph
             active = DIR_SETS.get(tile_type, set())
             fitted_tile_counts[pos] = {d: ([1, 1] if d in active else [0, 0]) for d in "NESW"}
-        
-        # Check if fitted classification has any non-empty tiles
+
         has_valid_tiles = any(v != "empty" for v in fitted_classification.values())
-        if not has_valid_tiles:
-            print("Warning: Fitted classification has no valid tiles, skipping publication")
-            return
 
         # --------------------------------------------
-        # 3. Build the 2×4 combined figure
+        # 3. Build the 2×4 combined figure with shared axes
         # --------------------------------------------
-        fig = plt.figure(figsize=(20, 10))
-        gs = fig.add_gridspec(2, 4, hspace=0.3, wspace=0.3)
+        # Calculate common limits from ALL data
+        all_xs = []
+        all_ys = []
+
+        # Collect from all tile positions
+        for pos in tile_probabilities.keys():
+            all_xs.append(pos[0])
+            all_ys.append(pos[1])
+        for pos in final_types.keys():
+            all_xs.append(pos[0])
+            all_ys.append(pos[1])
+        for pos in fitted_probabilities.keys():
+            all_xs.append(pos[0])
+            all_ys.append(pos[1])
+        for pos in fitted_final_types.keys():
+            all_xs.append(pos[0])
+            all_ys.append(pos[1])
+
+        # Collect from trajectories
+        if len(smooth_traj) > 0:
+            all_xs.extend(smooth_traj[:, 0])
+            all_ys.extend(smooth_traj[:, 1])
+        if len(fitted_traj) > 0:
+            all_xs.extend(fitted_traj[:, 0])
+            all_ys.extend(fitted_traj[:, 1])
+
+        # Also collect from gt and ekf trajectories
+        if len(self.gt_trajectory) > 0:
+            gt = np.array(self.gt_trajectory)
+            all_xs.extend(gt[:, 0])
+            all_ys.extend(gt[:, 1])
+        if len(self.ekf_trajectory) > 0:
+            ekf = np.array(self.ekf_trajectory)
+            all_xs.extend(ekf[:, 0])
+            all_ys.extend(ekf[:, 1])
+
+        if all_xs and all_ys:
+            # Calculate padding based on tile size
+            padding = TILE_SIZE * 1.5
+
+            x_min = np.floor(min(all_xs) / TILE_SIZE) * TILE_SIZE - padding
+            x_max = np.ceil(max(all_xs) / TILE_SIZE) * TILE_SIZE + padding
+            y_min = np.floor(min(all_ys) / TILE_SIZE) * TILE_SIZE - padding
+            y_max = np.ceil(max(all_ys) / TILE_SIZE) * TILE_SIZE + padding
+
+            # Make limits square (equal range)
+            x_range = x_max - x_min
+            y_range = y_max - y_min
+            max_range = max(x_range, y_range)
+            x_center = (x_max + x_min) / 2
+            y_center = (y_max + y_min) / 2
+            half_range = max_range / 2
+
+            x_min = x_center - half_range
+            x_max = x_center + half_range
+            y_min = y_center - half_range
+            y_max = y_center + half_range
+        else:
+            x_min, x_max = -2, 2
+            y_min, y_max = -2, 2
+
+        # Target ~2737x1525 px, rough aspect ratio preserved.
+        dpi = 150
+        fig_w_in = 2737 / dpi   # 18.2467
+        fig_h_in = 1525 / dpi   # 10.1667
+        fig = plt.figure(figsize=(fig_w_in, fig_h_in), dpi=dpi)
+
+        # Margins chosen so each of the 4x2 grid cells is a square in
+        # inches (so 0.6x0.6 m tiles render as true squares with zero
+        # gap), while leaving enough room around the edges that tick
+        # labels, titles, and row/column labels don't get clipped.
+        # For a given left/right margin, the required top/bottom margin
+        # to keep cells square is:
+        #   height_frac = width_frac * fig_w_in / (2 * fig_h_in)
+        left, right = 0.07, 0.97
+        width_frac = right - left
+        height_frac = width_frac * fig_w_in / (2 * fig_h_in)
+        top = 0.90
+        bottom = top - height_frac
+
+        gs = fig.add_gridspec(
+            2, 4, hspace=0.0, wspace=0.0,
+            left=left, right=right, bottom=bottom, top=top,
+        )
+
+        # Create subplots with shared axes
+        ax_traj = fig.add_subplot(gs[0, 0])
+        ax_prob = fig.add_subplot(gs[0, 1], sharex=ax_traj, sharey=ax_traj)
+        ax_types = fig.add_subplot(gs[0, 2], sharex=ax_traj, sharey=ax_traj)
+        ax_graph = fig.add_subplot(gs[0, 3], sharex=ax_traj, sharey=ax_traj)
+
+        ax_fitted_traj = fig.add_subplot(gs[1, 0], sharex=ax_traj, sharey=ax_traj)
+        ax_fitted_prob = fig.add_subplot(gs[1, 1], sharex=ax_traj, sharey=ax_traj)
+        ax_fitted_types = fig.add_subplot(gs[1, 2], sharex=ax_traj, sharey=ax_traj)
+        ax_fitted_graph = fig.add_subplot(gs[1, 3], sharex=ax_traj, sharey=ax_traj)
+
+        # Set common limits and styling
+        all_axes = [ax_traj, ax_prob, ax_types, ax_graph,
+                    ax_fitted_traj, ax_fitted_prob, ax_fitted_types, ax_fitted_graph]
+
+        for ax in all_axes:
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+            ax.set_aspect('equal')
+
+            # Remove x-axis labels for all but bottom row
+            if ax not in [ax_fitted_traj, ax_fitted_prob, ax_fitted_types, ax_fitted_graph]:
+                ax.set_xlabel('')
+                ax.tick_params(labelbottom=False)
+
+            # Remove y-axis labels for all but leftmost column
+            if ax not in [ax_traj, ax_fitted_traj]:
+                ax.set_ylabel('')
+                ax.tick_params(labelleft=False)
+
+            # Set tick parameters for cleaner look
+            ax.tick_params(direction='in', which='both', top=True, right=True, labelsize=9)
+
+            # Remove tick marks on inner axes for cleaner look
+            if ax in [ax_prob, ax_types, ax_graph, ax_fitted_prob, ax_fitted_types, ax_fitted_graph]:
+                ax.tick_params(left=False, right=False)
+                if ax in [ax_prob, ax_types, ax_graph]:
+                    ax.tick_params(bottom=False)
+
+        # Add X and Y axis labels only on bottom-left plot
+        ax_fitted_traj.set_xlabel("X [m]", fontsize=10)
+        ax_fitted_traj.set_ylabel("Y [m]", fontsize=10)
 
         # --- Row 1: Original (RTS-smoothed) results ---
-        
+
         # Trajectory comparison (top-left)
-        ax_traj = fig.add_subplot(gs[0, 0])
-        _, _ = self._build_trajectory_comparison_figure(smooth_traj, ax=ax_traj)
+        _, _ = self._build_trajectory_comparison_figure(smooth_traj, fitted_traj=None, ax=ax_traj)
 
         # Tile probabilities (top-middle-left)
-        ax_prob = fig.add_subplot(gs[0, 1])
         plot_tile_probabilities(tile_probabilities, uncertainty,
-                                tile_size=TILE_SIZE, ax=ax_prob,
-                                title="Per-Tile Belief (RTS)")
+                                tile_size=TILE_SIZE, ax=ax_prob)
 
         # Tile types (top-middle-right)
-        ax_types = fig.add_subplot(gs[0, 2])
         plot_tile_types(final_types, updated_observed,
-                        tile_size=TILE_SIZE, ax=ax_types,
-                        title="After Belief Propagation (RTS)")
+                        tile_size=TILE_SIZE, ax=ax_types)
 
         # Street graph (top-right)
-        ax_graph = fig.add_subplot(gs[0, 3])
         plot_street_graph(bp_classification, bp_tile_counts,
-                        tile_size=TILE_SIZE, min_events=1, ax=ax_graph)
+                        tile_size=TILE_SIZE, min_events=1, ax=ax_graph, title="")
 
         # --- Row 2: Fitted trajectory results ---
-        
+
         # Fitted trajectory comparison (bottom-left)
-        ax_fitted_traj = fig.add_subplot(gs[1, 0])
-        _, _ = self._build_fitted_trajectory_comparison_figure(smooth_traj, fitted_traj, ax=ax_fitted_traj)
-        
+        _, _ = self._build_trajectory_comparison_figure(smooth_traj, fitted_traj, ax=ax_fitted_traj)
+
         # Fitted tile probabilities (bottom-middle-left)
-        ax_fitted_prob = fig.add_subplot(gs[1, 1])
         plot_tile_probabilities(fitted_probabilities, fitted_uncertainty,
-                                tile_size=TILE_SIZE, ax=ax_fitted_prob,
-                                title="Per-Tile Belief (Fitted)")
+                                tile_size=TILE_SIZE, ax=ax_fitted_prob)
 
         # Fitted tile types (bottom-middle-right)
-        ax_fitted_types = fig.add_subplot(gs[1, 2])
         plot_tile_types(fitted_final_types, fitted_updated_observed,
-                        tile_size=TILE_SIZE, ax=ax_fitted_types,
-                        title="After Belief Propagation (Fitted)")
+                        tile_size=TILE_SIZE, ax=ax_fitted_types)
 
         # Fitted street graph (bottom-right)
-        ax_fitted_graph = fig.add_subplot(gs[1, 3])
         plot_street_graph(fitted_classification, fitted_tile_counts,
-                        tile_size=TILE_SIZE, min_events=1, ax=ax_fitted_graph)
+                        tile_size=TILE_SIZE, min_events=1, ax=ax_fitted_graph, title="")
 
         # --------------------------------------------
-        # 4. Publish the combined figure
+        # 4. Add row labels on the left side
+        # --------------------------------------------
+        # Get figure coordinates for row labels
+        bbox_traj = ax_traj.get_position()
+        bbox_fitted = ax_fitted_traj.get_position()
+
+        # Row 1 label
+        fig.text(0.02, (bbox_traj.y0 + bbox_traj.y1) / 2, 'RTS smoothed',
+                va='center', ha='center', rotation='vertical', fontsize=13, fontweight='bold')
+
+        # Row 2 label
+        fig.text(0.02, (bbox_fitted.y0 + bbox_fitted.y1) / 2, 'with fitting',
+                va='center', ha='center', rotation='vertical', fontsize=13, fontweight='bold')
+
+        # --------------------------------------------
+        # 5. Add column titles on top
+        # --------------------------------------------
+        column_titles = ['Trajectory', 'Probabilities', 'Tile Types', 'Street Graph']
+
+        # Get x positions from the top row axes
+        top_axes = [ax_traj, ax_prob, ax_types, ax_graph]
+        for col, (ax, title) in enumerate(zip(top_axes, column_titles)):
+            bbox = ax.get_position()
+            x_pos = (bbox.x0 + bbox.x1) / 2
+            fig.text(x_pos, 0.955, title,
+                    va='center', ha='center', fontsize=12, fontweight='bold')
+
+        # --------------------------------------------
+        # 6. Publish
         # --------------------------------------------
         self.pub_street_graph_plot.publish(self._fig_to_compressed_imgmsg(fig))
         plt.close(fig)
@@ -962,63 +1056,6 @@ class EKFLocalizationNode(DTROS):
         ids = np.arange(1, len(arr) + 1).reshape(-1, 1)
         return np.hstack([ids, arr])
 
-
-    def _build_fitted_trajectory_comparison_figure(self, smooth_traj, fitted_traj, ax=None):
-        """
-        Plot ground truth, EKF forward, RTS-smoothed, and fitted trajectory.
-        """
-        if ax is None:
-            fig, ax = plt.subplots(figsize=(8, 8))
-        else:
-            fig = ax.figure
-
-        if len(self.gt_trajectory) > 0:
-            gt = np.array(self.gt_trajectory)
-            ax.plot(gt[:, 0], gt[:, 1], color='green', linewidth=1.5, label='Ground truth')
-        if len(self.ekf_trajectory) > 0:
-            ekf = np.array(self.ekf_trajectory)
-            ax.plot(ekf[:, 0], ekf[:, 1], color='red', linewidth=1.0,
-                    linestyle='--', label='EKF (forward)')
-        if smooth_traj.shape[0] > 0:
-            ax.plot(smooth_traj[:, 0], smooth_traj[:, 1], color='blue',
-                    linewidth=1.5, label='RTS-smoothed')
-        if fitted_traj is not None and fitted_traj.shape[0] > 0:
-            ax.plot(fitted_traj[:, 0], fitted_traj[:, 1], color='purple',
-                    linewidth=2.0, linestyle='-.', label='Fitted Template')
-
-        ax.set_aspect('equal')
-        ax.set_xlabel("X [m]")
-        ax.set_ylabel("Y [m]")
-        ax.set_title("Trajectory with Fitted Template")
-        ax.legend(loc='best', fontsize=8)
-        
-        # Grid lines every 0.6m
-        TILE_SIZE = 0.6
-        all_data = []
-        if len(self.gt_trajectory) > 0:
-            all_data.append(np.array(self.gt_trajectory))
-        if len(self.ekf_trajectory) > 0:
-            all_data.append(np.array(self.ekf_trajectory))
-        if smooth_traj.shape[0] > 0:
-            all_data.append(smooth_traj)
-        if fitted_traj is not None and fitted_traj.shape[0] > 0:
-            all_data.append(fitted_traj)
-        
-        if all_data:
-            all_data = np.vstack(all_data)
-            x_min = np.floor(all_data[:, 0].min() / TILE_SIZE) * TILE_SIZE
-            x_max = np.ceil(all_data[:, 0].max() / TILE_SIZE) * TILE_SIZE
-            y_min = np.floor(all_data[:, 1].min() / TILE_SIZE) * TILE_SIZE
-            y_max = np.ceil(all_data[:, 1].max() / TILE_SIZE) * TILE_SIZE
-            
-            x_ticks = np.arange(x_min, x_max + TILE_SIZE, TILE_SIZE)
-            y_ticks = np.arange(y_min, y_max + TILE_SIZE, TILE_SIZE)
-            
-            ax.set_xticks(x_ticks)
-            ax.set_yticks(y_ticks)
-            ax.grid(True, linestyle='-', linewidth=0.5, alpha=0.3, zorder=0)
-
-        return fig, ax
 
 
 if __name__ == "__main__":

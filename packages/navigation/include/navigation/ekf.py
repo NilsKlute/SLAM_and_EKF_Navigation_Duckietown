@@ -20,6 +20,15 @@ class EKF:
         self.q_mutex = Lock()
         self.history = []  # one entry per predict() call, for RTS smoothing
 
+        # Add initial state to history for proper smoothing
+        self.history.append({
+            'q_prior': q_0.copy(),  # No prior before initial
+            'F':       np.eye(3),   # No motion before initial
+            'q_pred':  q_0.copy(),
+            'P_pred':  P_0.copy(),
+            'q_filt':  q_0.copy(),
+            'P_filt':  P_0.copy(),
+        })
     def predict(self, dX, dT):
         with self.q_mutex:
             theta = self.q[2]
@@ -98,18 +107,20 @@ class EKF:
 
             q_smooth = [None] * n
             P_smooth = [None] * n
+            
+            # Start from the last state (same as before)
             q_smooth[-1] = self.history[-1]['q_filt'].copy()
             P_smooth[-1] = self.history[-1]['P_filt'].copy()
 
-            for k in range(n - 2, -1, -1):
+            # Backward pass - but skip the first state (k=0)
+            for k in range(n - 2, -1, -1):  # Changed: stop at 1 instead of 0
                 F_next      = self.history[k + 1]['F']
                 P_pred_next = self.history[k + 1]['P_pred']
                 q_pred_next = self.history[k + 1]['q_pred']
                 P_filt_k    = self.history[k]['P_filt']
                 q_filt_k    = self.history[k]['q_filt']
 
-                # Regularize: your P_0/Q params currently default to 0.0 if
-                # unset in the calibration yaml, which makes P_pred singular.
+                # Regularize
                 P_pred_reg = P_pred_next + np.eye(3) * 1e-9
                 try:
                     P_pred_inv = np.linalg.inv(P_pred_reg)
@@ -126,4 +137,3 @@ class EKF:
                 P_smooth[k] = P_filt_k + C_k @ (P_smooth[k + 1] - P_pred_next) @ C_k.T
 
             return np.array(q_smooth)
-        
