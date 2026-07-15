@@ -324,6 +324,7 @@ class EKFLocalizationNode(DTROS):
 
 
     def publish_corrected_trajectory_and_map(self):
+        print("rts_smooth")
         smooth_traj = self.ekf.rts_smooth()
         if len(smooth_traj) < 2:
             return
@@ -340,12 +341,14 @@ class EKFLocalizationNode(DTROS):
         TILE_SIZE = 0.6
 
         # Original analysis
+        print("analyze_tile_traversals_tile_types")
         tile_probabilities, uncertainty, vote_counts, total_visits = analyze_tile_traversals_tile_types(
             smooth_traj, tile_size=TILE_SIZE, tile_types=TILE_TYPES
         )
 
         observed_tiles = {pos: max(probs, key=probs.get) for pos, probs in tile_probabilities.items()}
 
+        print("propagate_constraints")
         final_types, intersection_directions, updated_observed = propagate_constraints(
             vote_counts=vote_counts,
             total_visits=total_visits,
@@ -355,6 +358,7 @@ class EKFLocalizationNode(DTROS):
             verbose=False,
         )
 
+        print("bp_to_street_graph_inputs")
         bp_classification, bp_tile_counts = bp_to_street_graph_inputs(final_types)
 
         # --------------------------------------------
@@ -362,6 +366,7 @@ class EKFLocalizationNode(DTROS):
         # --------------------------------------------
         trajectory = smooth_traj[:, :3]
 
+        print("infer_map")
         fitted_probabilities, fitted_uncertainty, fitted_sections, source_sections, fitted_vote_counts, fitted_total_visits = infer_map(
             trajectory,
             templates,
@@ -589,6 +594,7 @@ class EKFLocalizationNode(DTROS):
         # --------------------------------------------
         # 6. Publish
         # --------------------------------------------
+        print("pub_street_graph_plot")
         self.pub_street_graph_plot.publish(self._fig_to_compressed_imgmsg(fig))
         plt.close(fig)
 
