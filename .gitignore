@@ -1,6 +1,9 @@
 docs/build
 *pyc
 
+# node config backup archives
+packages/**/config/*.zip
+
 # documentation artifacts
 html/*
 !html/HTML_DOCS_WILL_BE_GENERATED_HERE

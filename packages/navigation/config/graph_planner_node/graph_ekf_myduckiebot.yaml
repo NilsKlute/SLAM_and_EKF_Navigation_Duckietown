@@ -11,7 +11,7 @@ angle_threshold_deg: 45.0
 edge_max_dist: 0.5
 edge_max_heading_diff_deg: 130.0
 edge_rescue_dist: 4.0
-edge_cone_threshold_deg: 0.0
+edge_cone_threshold_deg: 20.0
 edge_visibility_deg: 100.0
 edge_direction_change_deg: 100.0
 edge_prune_shortcuts: false

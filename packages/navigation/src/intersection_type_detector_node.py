@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import os
 import time
+from datetime import datetime
 from cv_bridge import CvBridge
 import numpy as np
 import cv2
@@ -67,6 +69,28 @@ class IntersectionTypeDetectorNode(DTROS):
         self.sub_thresholds = rospy.Subscriber(
             "~thresholds", AntiInstagramThresholds, self.thresholds_cb, queue_size=1)
 
+        # Save one debug image per intersection into the robot's /data mount.
+        # This node is fsm_controlled and only active in STOP_SIGN_INTERSECTION,
+        # so image_cb runs *only* while at an intersection: a gap in callbacks
+        # means the node was switched off in between, i.e. a new intersection.
+        self.save_debug_images = rospy.get_param("~save_debug_images", True)
+        self.save_dir          = rospy.get_param("~save_dir", "/data/intersection_debug")
+        # image_cb is rate-limited to ~1 Hz, so frames within one intersection are
+        # ~1 s apart; anything longer means we were switched off in between.
+        self.new_episode_gap   = rospy.get_param("~new_episode_gap", 3.0)
+        self._last_cb_time     = None
+        self._saved_this_intersection = False
+        self._intersection_count      = 0
+        if self.save_debug_images:
+            try:
+                os.makedirs(self.save_dir, exist_ok=True)
+                rospy.loginfo(f"[{self.node_name}] Saving one debug image per "
+                              f"intersection to {self.save_dir}")
+            except Exception as e:
+                rospy.logwarn(f"[{self.node_name}] Cannot create {self.save_dir}: {e} "
+                              f"— image saving disabled")
+                self.save_debug_images = False
+
         if cv2.cuda.getCudaEnabledDeviceCount() > 0:
             self.loginfo("Using CUDA GPU for line detection.")
             self.cuda_enabled = True
@@ -80,6 +104,15 @@ class IntersectionTypeDetectorNode(DTROS):
         if (time.time() - self.last_call) < 1:
             return
         self.last_call = time.time()
+
+        # A long gap since the last processed frame means this node was switched
+        # off in between (we left the intersection) -> this is a new intersection.
+        now = time.time()
+        if (self._last_cb_time is None
+                or (now - self._last_cb_time) > self.new_episode_gap):
+            self._saved_this_intersection = False
+            self._intersection_count += 1
+        self._last_cb_time = now
 
         try:
             obtained_image = self.bridge.compressed_imgmsg_to_cv2(image_msg)
@@ -131,6 +164,8 @@ class IntersectionTypeDetectorNode(DTROS):
                     'centroid_y':    y_coords.mean(),
                     'is_horizontal': abs(slope) < self.STEEPNESS_THRESHOLD,
                     'slope':         slope,
+                    'x_min':         float(x_coords.min()),
+                    'x_max':         float(x_coords.max()),
                 }
 
         # ----- Classification -----
@@ -197,7 +232,7 @@ class IntersectionTypeDetectorNode(DTROS):
 
         # ----- Debug image -----
         cluster_colors = [
-            (0, 0, 255), (0, 255, 0), (255, 0, 0),
+            (0, 0, 255), (0, 255, 0), 
             (0, 255, 255), (255, 0, 255), (255, 255, 0),
         ]
         debug_img = (bgr_img.astype(np.float32) * 0.25).astype(np.uint8)
@@ -214,10 +249,36 @@ class IntersectionTypeDetectorNode(DTROS):
         debug_disp = cv2.resize(debug_img, (w0 * SCALE, h0 * SCALE),
                                 interpolation=cv2.INTER_NEAREST)
 
+        # Snapshot of the clustered stage before any annotation, for the
+        # per-intersection pipeline image series.
+        stage_clustered = debug_disp.copy()
+
         # Grey centre-split line (used by fallback)
         cx_line = (width * SCALE) // 2
         cv2.line(debug_disp, (cx_line, 0),
                  (cx_line, debug_disp.shape[0] - 1), (80, 80, 80), 1)
+
+        # Fitted slope per cluster, drawn across the cluster's x-extent.
+        # Orange on purpose: not one of cluster_colors, so the fit is always
+        # distinguishable from the pixels it was fitted to.
+        SLOPE_COLOR = (255, 0, 0)
+        for data in cluster_summary.values():
+            m = data['slope']
+            if not np.isfinite(m):
+                continue
+            x1, x2 = data['x_min'], data['x_max']
+            # regression line passes through the centroid
+            y1 = m * (x1 - data['centroid_x']) + data['centroid_y']
+            y2 = m * (x2 - data['centroid_x']) + data['centroid_y']
+            # A near-vertical fit gives a huge slope; bound the endpoints so the
+            # int coords stay sane. cv2.line clips to the image, and the visible
+            # part keeps the correct direction.
+            y1 = float(np.clip(y1, -1e4, 1e4))
+            y2 = float(np.clip(y2, -1e4, 1e4))
+            cv2.line(debug_disp,
+                     (int(x1 * SCALE), int(y1 * SCALE)),
+                     (int(x2 * SCALE), int(y2 * SCALE)),
+                     SLOPE_COLOR, 2, cv2.LINE_AA)
 
         # Per-cluster annotation: role + slope
         for k, data in cluster_summary.items():
@@ -239,9 +300,57 @@ class IntersectionTypeDetectorNode(DTROS):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35,
                     (255, 255, 0), 1, cv2.LINE_AA)
 
+        # One image series per intersection: save the pipeline stages from the
+        # first frame of this episode, then skip until the next intersection.
+        if self.save_debug_images and not self._saved_this_intersection:
+            self._save_intersection_stages(
+                raw=obtained_image, cropped=bgr_img, red_mask=red_mask,
+                clustered=stage_clustered, slopes=debug_disp,
+                turns_str=turns_str, scale=SCALE)
+            self._saved_this_intersection = True
+
         debug_msg        = self.bridge.cv2_to_compressed_imgmsg(debug_disp)
         debug_msg.header = image_msg.header
         self.pub_debug_image.publish(debug_msg)
+
+    def _save_intersection_stages(self, raw, cropped, red_mask, clustered,
+                                  slopes, turns_str, scale):
+        """Save the detection pipeline stage-by-stage, one folder per
+        intersection, so the evolution raw -> cropped -> mask -> clusters ->
+        slopes can be shown side by side.
+        """
+        ts     = datetime.now().strftime("%Y%m%d-%H%M%S")
+        turns  = turns_str.replace(",", "") or "none"
+        folder = os.path.join(
+            self.save_dir,
+            f"int_{self._intersection_count:03d}_{ts}_turns-{turns}")
+
+        def up(img):
+            # The cropped stages are only ~20 px tall — upscale by the same
+            # factor as the debug view so all stages are legible and comparable.
+            # ascontiguousarray: bgr_img may be a np.fliplr view (LHT mode),
+            # which cv2 refuses to write to.
+            img  = np.ascontiguousarray(img)
+            h, w = img.shape[:2]
+            return cv2.resize(img, (w * scale, h * scale),
+                              interpolation=cv2.INTER_NEAREST)
+
+        stages = [
+            ("1_raw.jpg",       np.ascontiguousarray(raw)),  # full frame, uncropped
+            ("2_cropped.jpg",   up(cropped)),
+            ("3_red_mask.jpg",  up(red_mask)),                # single channel -> greyscale
+            ("4_clustered.jpg", clustered),                   # already upscaled
+            ("5_slopes.jpg",    slopes),                      # already upscaled
+        ]
+        try:
+            os.makedirs(folder, exist_ok=True)
+            for name, img in stages:
+                path = os.path.join(folder, name)
+                if not cv2.imwrite(path, img):
+                    rospy.logwarn(f"[{self.node_name}] imwrite returned False for {path}")
+            rospy.loginfo(f"[{self.node_name}] Saved {len(stages)} pipeline images to {folder}")
+        except Exception as e:
+            rospy.logwarn(f"[{self.node_name}] Could not save stages to {folder}: {e}")
 
     def preprocess_image(self, obtained_image):
         if self.ai_thresholds_received:

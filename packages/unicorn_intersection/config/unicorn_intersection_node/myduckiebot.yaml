@@ -23,9 +23,9 @@ canonical_goal_pose_straight: {
 
 # Hardcoded dead-reckoning intersection turns — tuned for myduckiebot (sim)
 hc_speed: 0.25
-hc_omega_left: 0.75
+hc_omega_left: 0.85
 hc_omega_straight: 0.0
 hc_omega_right: -1.7
-hc_duration_left: 4.0
+hc_duration_left: 4.5
 hc_duration_straight: 4.0
 hc_duration_right: 1.6

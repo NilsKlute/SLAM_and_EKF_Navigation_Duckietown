@@ -109,6 +109,10 @@ class TargetGUINode(object):
             rospy.Subscriber(
                 f"/{self.veh}/intersection_type_detector_node/debug/clusters/compressed",
                 CompressedImage, self._cb_clusters_image, queue_size=1)
+            rospy.Subscriber(
+                f"/{self.veh}/camera_node/image/compressed",
+                CompressedImage, self._cb_camera_image, queue_size=1,
+                buff_size=2 ** 24)
         else:
             rospy.logwarn("[target_gui] Pillow not installed — debug image panels disabled")
 
@@ -290,9 +294,22 @@ class TargetGUINode(object):
                                          text="Install Pillow to see the\nplanner debug image",
                                          fill="#AAAAAA", font=("DejaVu Sans", 10), justify="center")
 
-        # ---- Right column: segments (top) + clusters (bottom) ----
+        # ---- Right column: camera (top) + segments + clusters (bottom) ----
         right_panel = tk.Frame(debug_frame, bg=self.DUCK_YELLOW)
         right_panel.pack(side="left", anchor="n")
+
+        tk.Label(right_panel, text="Camera:",
+                 bg=self.DUCK_YELLOW, fg=self.DARK,
+                 font=("DejaVu Sans", 10, "bold")).pack(anchor="w", pady=(0, 2))
+
+        CAM_W, CAM_H = 560, 420
+        self._cam_canvas = tk.Canvas(right_panel, width=CAM_W, height=CAM_H,
+                                     bg=self.DARK, highlightthickness=0)
+        self._cam_canvas.pack(pady=(0, 10))
+        if not _PIL_AVAILABLE:
+            self._cam_canvas.create_text(CAM_W // 2, CAM_H // 2,
+                                         text="Install Pillow to see the\ncamera image",
+                                         fill="#AAAAAA", font=("DejaVu Sans", 10), justify="center")
 
         tk.Label(right_panel, text="Line detector segments:",
                  bg=self.DUCK_YELLOW, fg=self.DARK,
@@ -516,6 +533,25 @@ class TargetGUINode(object):
         self._img_photo = photo  # hold reference — GC would blank the canvas
         self._img_canvas.delete("all")
         self._img_canvas.create_image(w // 2, h // 2, anchor="center", image=photo)
+
+    def _cb_camera_image(self, msg):
+        try:
+            img = Image.open(io.BytesIO(bytes(msg.data)))
+            # Scale to the panel width, preserving aspect ratio. BILINEAR keeps
+            # the camera view readable (NEAREST is only good for the tiny
+            # upscaled debug images).
+            scale = 560 / img.width
+            img = img.resize((560, max(1, int(img.height * scale))), Image.BILINEAR)
+            photo = ImageTk.PhotoImage(img)
+            self.root.after(0, lambda p=photo: self._update_cam_canvas(p))
+        except Exception as e:
+            rospy.logwarn_throttle(10.0, f"[target_gui] Camera image decode failed: {e}")
+
+    def _update_cam_canvas(self, photo):
+        self._cam_photo = photo          # keep a ref or Tk garbage-collects it
+        self._cam_canvas.config(width=photo.width(), height=photo.height())
+        self._cam_canvas.delete("all")
+        self._cam_canvas.create_image(0, 0, anchor="nw", image=photo)
 
     def _cb_segments_image(self, msg):
         try:

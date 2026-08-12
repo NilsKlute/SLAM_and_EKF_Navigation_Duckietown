@@ -23,4 +23,4 @@ candidate_heading_tol_deg: 45.0
 arrival_threshold: 0.3
 
 # Directional command
-skip_n_nodes: 2
+skip_n_nodes: 3
