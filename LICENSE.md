@@ -2,7 +2,7 @@
 
 This repository is a fork of [`duckietown/dt-core`](https://github.com/duckietown/dt-core)
 and is governed by the **Duckietown Software Terms of Use**. The text below is the *informal
-summary* provided by Duckietown (reproduced from [`LICENSE.pdf`](LICENSE.pdf)); the complete,
+summary* provided by Duckietown (reproduced from [the original PDF](docs/duckietown-software-terms-v2.0.pdf)); the complete,
 binding terms are published by Duckietown:
 
 - Software license: <https://duckietown.com/sw-license/>

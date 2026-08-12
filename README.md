@@ -382,7 +382,7 @@ and closed-loop (feedback) intersection traversal to replace the hardcoded turns
 
 ## Report, authors & acknowledgements
 
-**Technical report:** [Graph-Based Autonomous Navigation and SLAM in Duckietown (PDF)](https://drive.google.com/file/d/1-3eC0jM_xo_nGa2LvttlTVOjYIxKn_cm/view?usp=drive_link)
+**Technical report:** [Graph-Based Autonomous Navigation and SLAM in Duckietown (PDF)](docs/written_report.pdf)
 
 **Course context:** developed for the Master's practical
 [*Autonomous Robotics with Duckietown*](https://uni-tuebingen.de/fakultaeten/mathematisch-naturwissenschaftliche-fakultaet/fachbereiche/informatik/lehrstuehle/autonomous-vision/projects/autonomous-robotics-with-duckietown/)
@@ -412,7 +412,7 @@ This is a fork of [`duckietown/dt-core`](https://github.com/duckietown/dt-core) 
 governed by the **Duckietown Software Terms of Use (v2.0)** — a custom Duckietown license
 covering personal, educational, and research use (no commercial use without a separate
 agreement). See [`LICENSE.md`](LICENSE.md) for the readable summary and
-[`LICENSE.pdf`](LICENSE.pdf) for the original; the complete formal terms are at
+[the original PDF](docs/duckietown-software-terms-v2.0.pdf); the complete formal terms are at
 <https://duckietown.com/sw-license/>.
 
 This work is a Master's course/research project and acknowledges the Duckietown Project as its
